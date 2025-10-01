@@ -87,6 +87,8 @@ const config = {
         logo: {
           alt: 'My Site Logo',
           src: 'img/logo.svg',
+          // 💡 핵심 수정: 로고 클릭 시 이동할 경로를 명시적으로 지정
+          href: '/intro', 
         },
         items: [
           {
@@ -94,7 +96,7 @@ const config = {
             sidebarId: 'tutorialSidebar',
             position: 'left',
             // 💡 루트 경로가 되었으므로, 레이블을 사이트 이름과 중복되지 않게 바꿀 수 있습니다.
-            label: '문서', // 'Tutorial' 대신 '문서' 등으로 변경
+            label: 'docs', // 'Tutorial' 대신 'docs' 등으로 변경
           },
 
           // 💡 블로그 링크 제거
@@ -102,8 +104,8 @@ const config = {
           // 💡 블로그 링크를 외부 URL로 리다이렉트되도록 수정합니다.
           {
             href: 'https://naaamgi.github.io/', // 👈 여기에 실제 블로그 URL을 입력하세요!
-            label: 'Blog',
-            position: 'right',
+            label: 'Go to Blog',
+            position: 'left',
           },
         ],
       },
