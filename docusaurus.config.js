@@ -32,7 +32,7 @@ const config = {
 
   deploymentBranch: 'gh-pages',
 
-  trailingSlash: false,
+  trailingSlash: true,
 
   onBrokenLinks: 'warn',
 
