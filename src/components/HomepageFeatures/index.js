@@ -4,12 +4,12 @@ import styles from './styles.module.css';
 
 const FeatureList = [
   {
-    title: 'Easy to Use',
-    Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
-    description: (
+    title: 'Focus on Documentation', // 💡 제목 수정
+    Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default, // 💡 이미지/아이콘 수정
+    description: ( // 💡 상세 설명 수정
       <>
-        Docusaurus was designed from the ground up to be easily installed and
-        used to get your website up and running quickly.
+        Docusaurus allows you to focus on your docs, and we&apos;ll do the
+        chores.
       </>
     ),
   },

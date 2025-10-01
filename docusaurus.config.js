@@ -10,8 +10,8 @@ import {themes as prismThemes} from 'prism-react-renderer';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'My Site',
-  tagline: 'Dinosaurs are cool',
+  title: '남키 노트',
+  tagline: '모의해킹 및 레드팀 기술 노트',
   favicon: 'img/favicon.ico',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
@@ -51,26 +51,22 @@ const config = {
       ({
         docs: {
           sidebarPath: './sidebars.js',
+          
+          // 💡 핵심 수정: 문서 경로를 루트(/)로 변경
+          routeBasePath: '/', 
+          
+          // 💡 docs 폴더의 기본 인덱스 파일을 제거했으므로, 
+          // index 페이지 역할을 할 docs 파일을 지정해야 합니다.
+          // intro 문서가 index 역할을 하게 됩니다.
+          // intro 문서 파일명은 intro.md 또는 intro.mdx여야 합니다.
+          
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
           editUrl:
             'https://github.com/facebook/docusaurus/tree/main/packages/create-docusaurus/templates/shared/',
         },
-        blog: {
-          showReadingTime: true,
-          feedOptions: {
-            type: ['rss', 'atom'],
-            xslt: true,
-          },
-          // Please change this to your repo.
-          // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/facebook/docusaurus/tree/main/packages/create-docusaurus/templates/shared/',
-          // Useful options to enforce blogging best practices
-          onInlineTags: 'warn',
-          onInlineAuthors: 'warn',
-          onUntruncatedBlogPosts: 'warn',
-        },
+        blog: false, 
+        
         theme: {
           customCss: './src/css/custom.css',
         },
@@ -87,7 +83,7 @@ const config = {
         respectPrefersColorScheme: true,
       },
       navbar: {
-        title: 'My Site',
+        title: '남키 노트',
         logo: {
           alt: 'My Site Logo',
           src: 'img/logo.svg',
@@ -97,12 +93,16 @@ const config = {
             type: 'docSidebar',
             sidebarId: 'tutorialSidebar',
             position: 'left',
-            label: 'Tutorial',
+            // 💡 루트 경로가 되었으므로, 레이블을 사이트 이름과 중복되지 않게 바꿀 수 있습니다.
+            label: '문서', // 'Tutorial' 대신 '문서' 등으로 변경
           },
-          {to: '/blog', label: 'Blog', position: 'left'},
+
+          // 💡 블로그 링크 제거
+          // {to: '/blog', label: 'Blog', position: 'left'}, 
+          // 💡 블로그 링크를 외부 URL로 리다이렉트되도록 수정합니다.
           {
-            href: 'https://github.com/facebook/docusaurus',
-            label: 'GitHub',
+            href: 'https://naaamgi.github.io/', // 👈 여기에 실제 블로그 URL을 입력하세요!
+            label: 'Blog',
             position: 'right',
           },
         ],
@@ -139,10 +139,11 @@ const config = {
           {
             title: 'More',
             items: [
-              {
-                label: 'Blog',
-                to: '/blog',
-              },
+              // 💡 블로그 링크 제거
+              // {
+              //   label: 'Blog',
+              //   to: '/blog',
+              // },
               {
                 label: 'GitHub',
                 href: 'https://github.com/facebook/docusaurus',
