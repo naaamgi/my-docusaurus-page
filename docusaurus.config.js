@@ -88,7 +88,7 @@ const config = {
           alt: 'My Site Logo',
           src: 'img/logo.svg',
           // 💡 핵심 수정: 로고 클릭 시 이동할 경로를 명시적으로 지정
-          href: '/intro', 
+          href: '/', 
         },
         items: [
           {
@@ -117,7 +117,7 @@ const config = {
             items: [
               {
                 label: 'Tutorial',
-                to: '/docs/intro',
+                to: '/',
               },
             ],
           },
