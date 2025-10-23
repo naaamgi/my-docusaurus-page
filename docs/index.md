@@ -1,47 +1,35 @@
 ---
+# Frontmatter: Docusaurus 설정
+title: 소개 (Intro)
+slug: /
+sidebar_label: 소개 (Intro)
 sidebar_position: 1
+generated_index: true # 카테고리 색인 페이지를 위한 설정 (필요에 따라 주석 해제)
 ---
 
-# Tutorial Intro
+## 📌 모의해킹 & 레드팀 학습 노트
 
-Let's discover **Docusaurus in less than 5 minutes**.
+안녕하세요! 정보보안 분야, 특히 **모의해킹(Penetration Testing)** 및 **레드팀(Red Team)** 취업을 목표로 공부하고 있는 주니어 개발자/보안 엔지니어입니다.
 
-## Getting Started
+이 문서는 제가 취업을 준비하며 학습한 모든 지식과 실습 기록을 정리하는 **기술 문서 저장소**입니다. 복잡하고 방대한 보안 지식을 체계적으로 정리하여 저만의 지식 베이스를 구축하고, 같은 목표를 가진 분들과 인사이트를 공유하는 것을 목표로 합니다.
 
-Get started by **creating a new site**.
+---
 
-Or **try Docusaurus immediately** with **[docusaurus.new](https://docusaurus.new)**.
+## 📌 주요 문서 카테고리 설명
 
-### What you'll need
+| 카테고리 | 주요 내용 및 학습 목표 | 대상 독자 |
+| :--- | :--- | :--- |
+| **모의 해킹/침투 (Penetration)** | **웹/모바일/네트워크** 환경 취약점 진단 방법론 및 도구 사용법. **실무형 진단 보고서** 작성 능력 강화. | 모의해킹 실무 역량 강화 희망자 |
+| **레드팀 (Redteam)** | **C2 운영**, 공격 인프라 구축, **TTPs (전술/기술/절차)** 분석 및 고급 공격 시나리오 구현. | 심화된 공격/방어 메커니즘 학습자 |
+| **CTF (WarGame)** | **Wargame 플랫폼** 및 대회 문제 풀이(Pwn, Reverse, Web, Crypto) 기록. 문제 해결 능력 및 **새로운 취약점 연구** 증명. | 취약점 분석 능력을 키우는 분 |
+| **Cheatsheet** | 자주 사용하는 **명령어, 페이로드, 스크립트** 모음. 실습 및 분석 효율성을 위한 **핵심 요약** 자료. | 효율적인 작업 환경을 찾는 분 |
 
-- [Node.js](https://nodejs.org/en/download/) version 20.0 or above:
-  - When installing Node.js, you are recommended to check all checkboxes related to dependencies.
+---
 
-## Generate a new site
+## 💡 이 문서의 특징
 
-Generate a new Docusaurus site using the **classic template**.
+* **실습 중심:** 이론뿐만 아니라 **CTF, 랩 환경, 실무형 시나리오**를 통한 실습 결과를 상세하게 기록합니다.
+* **체계적인 정리:** Docusaurus의 강력한 기능으로 지식을 계층적으로 분류하여 필요한 정보를 빠르게 찾을 수 있습니다.
+* **지속적인 업데이트:** 최신 보안 동향과 새로운 공격 기법을 끊임없이 연구하여 내용을 갱신할 예정입니다.
 
-The classic template will automatically be added to your project after you run the command:
-
-```bash
-npm init docusaurus@latest my-website classic
-```
-
-You can type this command into Command Prompt, Powershell, Terminal, or any other integrated terminal of your code editor.
-
-The command also installs all necessary dependencies you need to run Docusaurus.
-
-## Start your site
-
-Run the development server:
-
-```bash
-cd my-website
-npm run start
-```
-
-The `cd` command changes the directory you're working with. In order to work with your newly created Docusaurus site, you'll need to navigate the terminal there.
-
-The `npm run start` command builds your website locally and serves it through a development server, ready for you to view at http://localhost:3000/.
-
-Open `docs/intro.md` (this page) and edit some lines: the site **reloads automatically** and displays your changes.
+함께 성장하며, 궁극적으로 **실전적인 보안 능력**을 갖추는 것이 목표입니다. 잘 부탁드립니다!
