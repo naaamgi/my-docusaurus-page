@@ -85,7 +85,7 @@ const config = {
         title: '남키 노트',
         logo: {
           alt: 'My Site Logo',
-          src: 'img/logo.svg',
+          src: 'img/apple-touch-icon.png',
           // 💡 핵심 수정: 로고 클릭 시 이동할 경로를 명시적으로 지정
           href: '/', 
         },
