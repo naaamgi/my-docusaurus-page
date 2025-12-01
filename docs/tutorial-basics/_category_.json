@@ -1,9 +1,0 @@
-{
-  "label": "Penetration",
-  "position": 2,
-  "link": {
-    "type": "generated-index",
-    "title": "모의 해킹/침투 개요 및 학습 경로",
-    "description": "이곳에서는 웹, 모바일, 네트워크 환경에 대한 침투 테스트 방법론과 실습을 다룹니다."
-  }
-}

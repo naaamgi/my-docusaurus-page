@@ -1,0 +1,8 @@
+{
+  "label": "🔍 Reconnaissance",
+  "position": 1,
+  "link": {
+    "type": "generated-index",
+    "description": "정보 수집 단계 - 대상 시스템의 정보를 수집하는 과정"
+  }
+}
