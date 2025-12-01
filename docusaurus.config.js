@@ -14,6 +14,18 @@ const config = {
   tagline: '모의해킹 및 레드팀 기술 노트',
   favicon: 'img/favicon.ico',
 
+  headTags: [
+    {
+      tagName: 'meta',
+      attributes: {
+        // [⚠️ 여기에 스크린샷에서 복사한 name 속성을 붙여넣으세요]
+        name: 'algolia-site-verification', 
+        // [⚠️ 여기에 스크린샷에서 복사한 content 속성을 붙여넣으세요]
+        content: '86D382FE0A8B0915', 
+      },
+    },
+  ],
+
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {
     v4: true, // Improve compatibility with the upcoming Docusaurus v4
@@ -110,8 +122,8 @@ const config = {
       },
       // Algolia DocSearch 설정
       algolia: {
-        appId: 'F38ZDKBSOQ',
-        apiKey: '2156e1affb8cdb4271d117ad9e25c7b7',
+        appId: 'IKHBXIBECM',
+        apiKey: '5859c4721a681cc197a6ba1bd5ecf454',
         indexName: 'namgi-notes',
         contextualSearch: true,
         searchParameters: {},
