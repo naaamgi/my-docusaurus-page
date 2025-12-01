@@ -1,8 +1,0 @@
-{
-  "label": "Information Gathering",
-  "position": 2,
-  "link": {
-    "type": "generated-index",
-    "description": "정보 수집 및 열거"
-  }
-}

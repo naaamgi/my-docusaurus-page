@@ -1,8 +1,0 @@
-{
-  "label": "Services",
-  "position": 3,
-  "link": {
-    "type": "generated-index",
-    "description": "서비스별 침투 테스트 명령어 모음"
-  }
-}
