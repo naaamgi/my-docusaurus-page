@@ -1,0 +1,8 @@
+{
+  "label": "Privilege Escalation",
+  "position": 8,
+  "link": {
+    "type": "generated-index",
+    "description": "Linux 및 Windows 시스템 권한 상승 기법"
+  }
+}
