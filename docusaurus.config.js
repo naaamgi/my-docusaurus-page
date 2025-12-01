@@ -108,14 +108,13 @@ const config = {
           },
         ],
       },
-      // Algolia DocSearch 설정 (신청 후 키 받으면 작동)
+      // Algolia DocSearch 설정
       algolia: {
-        appId: 'YOUR_APP_ID', // Algolia 신청 후 받을 App ID
-        apiKey: 'YOUR_SEARCH_API_KEY', // Algolia 신청 후 받을 API Key
-        indexName: 'YOUR_INDEX_NAME', // Algolia 신청 후 받을 Index Name
+        appId: 'F38ZDKBSOQ',
+        apiKey: '2156e1affb8cdb4271d117ad9e25c7b7',
+        indexName: 'namgi-notes',
         contextualSearch: true,
         searchParameters: {},
-        searchPagePath: 'search',
       },
       footer: {
         style: 'dark',
