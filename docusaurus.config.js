@@ -18,6 +18,14 @@ const config = {
     {
       tagName: 'meta',
       attributes: {
+        name: 'google-site-verification', 
+        content: 'TkKso4Rp4FBa7WmPeJolw4p7PHEmAgbaEN58vXpDT7s', 
+      },
+    },
+    
+    {
+      tagName: 'meta',
+      attributes: {
         // [⚠️ 여기에 스크린샷에서 복사한 name 속성을 붙여넣으세요]
         name: 'algolia-site-verification', 
         // [⚠️ 여기에 스크린샷에서 복사한 content 속성을 붙여넣으세요]
