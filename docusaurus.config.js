@@ -125,8 +125,9 @@ const config = {
         appId: 'IKHBXIBECM',
         apiKey: '5859c4721a681cc197a6ba1bd5ecf454',
         indexName: 'namgi-notes',
-        contextualSearch: true,
+        contextualSearch: false,
         searchParameters: {},
+        facetFilters: [], 
       },
       footer: {
         style: 'dark',
