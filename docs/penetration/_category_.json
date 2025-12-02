@@ -1,6 +1,6 @@
 {
   "label": "Penetration Testing",
-  "position": 2,
+  "position": 3,
   "link": {
     "type": "generated-index",
     "description": "모의해킹 단계별 상세 가이드 - Reconnaissance, Vulnerability Assessment, Exploitation, Post-Exploitation"

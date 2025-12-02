@@ -1,6 +1,5 @@
 ---
 sidebar_position: 1
-title: Overview
 ---
 
 # Security Cheatsheet
@@ -107,21 +106,21 @@ hydra -l admin -P passwords.txt ssh://<RHOST>
 
 **초기 침투:**
 1. [Nmap](/cheatsheet/information-gathering/nmap) - 포트 스캔
-2. [Services](/cheatsheet/services) - 서비스별 공격
-3. [Web Application](/cheatsheet/web-application) - 웹 공격
+2. Services - 서비스별 공격 (사이드바 참조)
+3. Web Application - 웹 공격 (사이드바 참조)
 
 **권한 상승:**
-1. [Linux Privilege Escalation](/cheatsheet/basics/linux-priv-esc)
-2. [Windows Privilege Escalation](/cheatsheet/basics/windows-priv-esc)
+1. [Linux Privilege Escalation](/cheatsheet/privilege-escalation/linux)
+2. [Windows Privilege Escalation](/cheatsheet/privilege-escalation/windows)
 
 **자격증명 획득:**
-1. [Password Attacks](/cheatsheet/password-attacks) - 크래킹
+1. Password Attacks - 크래킹 (사이드바 참조)
 2. [mimikatz](/cheatsheet/password-attacks/mimikatz) - Windows 자격증명
 3. [hashcat](/cheatsheet/password-attacks/hashcat) - Hash 크래킹
 
 **횡적 이동:**
-1. [Active Directory](/cheatsheet/post-exploitation/active-directory)
-2. [Lateral Movement](/cheatsheet/post-exploitation/lateral-movement)
+1. Active Directory - 사이드바 참조
+2. Lateral Movement - 사이드바 참조
 
 ---
 
