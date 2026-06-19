@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkmy_docusaurus_website=self.webpackChunkmy_docusaurus_website||[]).push([[3490],{3490:(e,s,u)=>{u.d(s,{createInfoServices:()=>c.v});var c=u(91885);u(87960)}}]);
