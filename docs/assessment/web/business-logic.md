@@ -1,0 +1,597 @@
+---
+sidebar_position: 26
+title: 비즈니스 로직 결함 (Business Logic Flaws)
+description: 웹 진단 - 가격/수량 변조, 결제 단계 우회, 쿠폰/포인트 로직, 시퀀스 우회, 환불 악용 등 비즈니스 로직 점검
+keywords: [Business Logic, 비즈니스 로직, 가격 변조, 쿠폰 악용, 결제 우회, Workflow Bypass, OWASP A06]
+draft: false
+---
+
+# 비즈니스 로직 결함 (Business Logic Flaws)
+
+> 인증 / 권한 / 인젝션 같은 카테고리에 속하지 않는, **애플리케이션 흐름 자체의 설계 결함**.
+> 자동화 도구가 못 찾는 영역 — 도메인 이해 + 직접 시나리오 작성이 핵심. 결제 / 포인트 / 쿠폰 영역에서 단일 결함으로 직접 금전 손실.
+
+## 점검 개요
+
+| 항목 | 내용 |
+| :--- | :--- |
+| **분류** | OWASP A06:2025 - Insecure Design / KISA 비즈니스 로직 |
+| **CWE** | [CWE-840: Business Logic Errors](https://cwe.mitre.org/data/definitions/840.html), [CWE-841: Improper Enforcement of Behavioral Workflow](https://cwe.mitre.org/data/definitions/841.html) |
+| **영향도** | 🔴 (결제 / 포인트 / 쿠폰 / 환불 악용) / 🟡 (일반 워크플로 우회) |
+| **점검 난이도** | 중 ~ 상 (도메인 이해 + 시나리오 설계 필요) |
+| **예상 점검 시간** | 2시간 ~ 1일 (기능 수에 비례) |
+
+---
+
+## 점검 목적
+
+애플리케이션의 비즈니스 흐름 (결제, 환불, 쿠폰, 회원 등급, 등록 절차 등) 이 의도된 순서 / 조건 / 제약 으로 동작하는지 확인한다. 인증/권한/인젝션 같은 표준 카테고리에 속하지 않는 결함으로, **자동화 도구가 거의 못 찾는 영역** 이라 직접 시나리오를 설계해 점검해야 한다.
+
+> **다른 페이지와 영역 분리**
+> - 동시 요청 (TOCTOU) → `race-condition.md`. 본 페이지는 **단일 요청 흐름 자체** 의 결함
+> - 권한 / IDOR → `authorization-idor.md`
+> - Mass Assignment (`role=admin` 주입) → `authorization-idor.md`
+> - 인증 흐름 우회 (사용자 열거, MFA 우회) → `authentication.md`
+
+---
+
+## 유형 구분
+
+| 유형 | 핵심 |
+| :--- | :--- |
+| **가격 / 수량 변조** | 클라이언트가 보낸 값을 그대로 신뢰 → 가격 0원, 수량 음수, 할인율 변조 |
+| **결제 / 주문 단계 우회** | 다단계 결제의 중간 단계 건너뛰기 (검증 → 결제 → 확정 순서 무시) |
+| **쿠폰 / 포인트 로직** | 사용 횟수 / 만료일 / 적용 조건 우회, 중첩 사용 |
+| **환불 / 취소 악용** | 환불 후 상품 사용 가능, 부분 환불 다회 |
+| **회원 등급 / 가입 보너스** | 동일 사용자 다중 가입 보너스, 등급 산정 변조 |
+| **수량 / 한도 검증 미흡** | 음수 / 0 / 매우 큰 값 / 부동소수점 정밀도 악용 |
+| **상태 머신 위반** | 상태 전이 정책 무시 (취소된 주문 결제 등) |
+
+---
+
+## 진단 절차
+
+### Step 1. 도메인 / 핵심 흐름 매핑
+
+서비스의 핵심 비즈니스 흐름을 모두 정리. 점검 우선순위:
+
+```
+[1순위 금전 직결]
+- 결제 / 환불 / 송금
+- 쿠폰 / 포인트 / 마일리지 사용
+- 가격 / 할인 / 배송비 계산
+
+[2순위 자원 / 등급]
+- 회원가입 보너스 / 친구 추천
+- 회원 등급 산정
+- 한정 자원 (수량 한정 상품, 추첨)
+
+[3순위 워크플로]
+- 다단계 폼 / 신청서
+- 주문 → 결제 → 배송 상태 전이
+- 인증 흐름 (회원가입 → 이메일 인증 → 활성화)
+```
+
+### Step 2. 클라이언트 / 서버 신뢰 경계 식별
+
+각 요청에서 다음을 분리:
+
+- **클라이언트가 보내는 값** — 사용자가 변조 가능 (URL, body, 헤더, 쿠키, 히든 필드)
+- **서버가 결정해야 하는 값** — 가격, 할인율, 사용자 ID, 권한, 시간
+
+Burp 시퀀스 분석에서 "클라이언트가 보내고 있는데 서버가 결정해야 할 값" 을 찾는 게 핵심.
+
+### Step 3. 시나리오별 페이로드 시도
+
+케이스 1~7 의 패턴을 도메인에 맞게 적용. 자동화 도구가 못 잡으므로 **수동 점검 + 도메인 지식** 이 핵심.
+
+### Step 4. 영향 입증
+
+API 응답만으로는 부족 — 후속 조회 (주문 상세, 잔액, 쿠폰 이력) 로 실제 상태 변화 입증.
+
+---
+
+## 페이로드 / 테스트 케이스
+
+### 케이스 1: 가격 / 수량 / 할인율 변조
+
+**언제 쓰는지**: 가장 흔하고 임팩트 큰 패턴. 결제 / 주문 / 가격 계산 요청에 항상 시도.
+
+**시나리오 1-1 — 가격 변조:**
+
+```http
+POST /api/order HTTP/1.1
+Content-Type: application/json
+
+{
+  "product_id": 42,
+  "quantity": 1,
+  "price": 1                    ← 1,500,000원 상품의 가격을 1로 변조
+}
+```
+
+**판정**: 응답이 200 + 1원 결제 / 1원으로 주문 생성되면 취약. 백엔드가 `product_id` 로 가격을 다시 조회하지 않고 클라이언트 값을 신뢰.
+
+**시나리오 1-2 — 수량 음수 / 0:**
+
+```http
+{
+  "product_id": 42,
+  "quantity": -1,               ← 음수
+  "price": 1500000
+}
+
+또는:
+
+{"quantity": 0}                 ← 0 수량 주문 → 무료 배송비 적용 등 부수 효과
+```
+
+**판정**: 음수 수량으로 잔액이 오히려 증가 (환불 효과) / 무료 상품 발급되면 취약.
+
+**시나리오 1-3 — 할인율 변조:**
+
+```http
+{
+  "product_id": 42,
+  "discount_rate": 100,         ← 할인율 100% (전액 할인)
+  "discount_amount": 999999     ← 절대 할인 금액 변조
+}
+```
+
+**시나리오 1-4 — 부동소수점 / 큰 값 우회:**
+
+```http
+{"price": 0.0001}               ← 0원 처리되지만 결제 1회 적용
+{"price": 9999999999999}        ← 오버플로 / 음수 환산
+{"quantity": 1e308}              ← 부동소수점 오버플로
+```
+
+### 케이스 2: 결제 / 주문 단계 우회
+
+**언제 쓰는지**: 다단계 결제 / 신청 / 회원가입 흐름. 각 단계의 URL/엔드포인트를 추출 후 직접 호출.
+
+**전제 — 정상 흐름:**
+
+```
+1. POST /api/cart/add               → 장바구니 추가
+2. POST /api/order/preview          → 주문 미리보기 (가격 계산)
+3. POST /api/order/create           → 주문 생성 (PENDING 상태)
+4. POST /api/payment                → 결제 (PENDING → COMPLETED)
+5. POST /api/order/confirm          → 주문 확정
+```
+
+**우회 시도:**
+
+```
+- 1, 2 단계 건너뛰고 3, 4 단계 직접 호출
+- 4 단계 (결제) 건너뛰고 5 단계 (확정) 만 호출 → 결제 없이 주문 확정
+- 4 단계의 결제 결과 (`{"status": "completed"}`) 를 클라이언트가 보내는 구조면 위조
+```
+
+**판정**: 중간 단계 건너뛰고 최종 상태 (주문 확정 / 상품 발송) 까지 도달하면 취약. 백엔드가 "이전 단계가 완료됐는지" 검증 안 함.
+
+### 케이스 3: 쿠폰 / 포인트 로직 우회
+
+**언제 쓰는지**: 쿠폰 / 할인 코드 / 포인트 / 마일리지가 있는 모든 서비스.
+
+**시나리오 3-1 — 만료 / 적용 조건 우회:**
+
+```http
+{
+  "coupon_code": "EXPIRED_COUPON",     ← 만료된 쿠폰
+  "items": [...]
+}
+```
+
+**판정**: 만료 쿠폰이 적용되면 검증 누락. 클라이언트가 만료일 체크를 했다 가정하고 서버 측 검증을 누락한 패턴.
+
+**시나리오 3-2 — 최소 주문 금액 / 적용 조건 우회:**
+
+```
+- 쿠폰 적용 후 상품 제거 → 최소 주문 금액 미달이지만 쿠폰 유지
+- 일부 상품에만 적용 가능한 쿠폰을 다른 상품에 적용
+- 신규 가입자 전용 쿠폰을 기존 사용자가 사용
+- 첫 구매 한정 쿠폰을 N번째 구매에 적용
+```
+
+**시나리오 3-3 — 중첩 사용 / 다중 쿠폰:**
+
+```http
+{
+  "coupon_codes": ["DISCOUNT10", "DISCOUNT20", "DISCOUNT30"],
+  "items": [...]
+}
+```
+
+**판정**: 쿠폰 1개만 허용해야 하는데 N개 적용되면 취약. 클라이언트가 단일 입력 폼이라 가정하고 배열 입력 검증 누락.
+
+**시나리오 3-4 — 포인트 음수 사용 / 적립 변조:**
+
+```http
+{"use_points": -10000}          ← 음수 포인트 사용 = 포인트 적립 효과
+```
+
+### 케이스 4: 환불 / 취소 악용
+
+**언제 쓰는지**: 환불 / 주문 취소 / 부분 환불 기능이 있는 서비스.
+
+**시나리오 4-1 — 환불 후 상품 / 서비스 계속 이용:**
+
+```
+1. 디지털 상품 구매 (이북, 강의, 게임 아이템) → 다운로드 완료
+2. 환불 요청 → 환불 승인
+3. 다운로드한 상품 여전히 사용 가능 (환불 시 권한 회수 누락)
+```
+
+**시나리오 4-2 — 다중 부분 환불:**
+
+```
+- 100,000원 주문에 부분 환불 50,000원 요청 → 승인
+- 같은 주문에 다시 부분 환불 60,000원 요청 → 승인 (총 환불 > 결제액)
+```
+
+**시나리오 4-3 — 환불 금액 변조:**
+
+```http
+POST /api/refund HTTP/1.1
+{
+  "order_id": "ORD-001",
+  "amount": 9999999             ← 결제 금액 초과
+}
+```
+
+**판정**: 환불 합계가 결제 금액 초과되거나, 환불 후 권한 회수 누락되면 취약.
+
+### 케이스 5: 회원가입 / 가입 보너스 / 추천인 악용
+
+**언제 쓰는지**: 가입 보너스 / 추천인 보상 / 첫 구매 혜택이 있는 서비스.
+
+**시나리오 5-1 — 동일 사용자 다중 가입:**
+
+```
+- 이메일 별칭 (gmail 의 +alias, .) 으로 다중 가입
+  victim@gmail.com / victim+1@gmail.com / vict.im@gmail.com → 같은 메일박스
+- 휴대폰 번호 인증이 있어도 가입 보너스 정책상 휴대폰 검증이 약한 경우
+- 추천인 보상을 본인 추천인으로 등록
+```
+
+**판정**: 동일 사용자가 N번 가입 보너스 / 추천인 보상 받으면 취약. 직접 금전 손실.
+
+**시나리오 5-2 — 추천인 / 친구 초대 로직:**
+
+```
+- 자기 자신을 추천인으로 등록 (referral_code 본인 코드)
+- 추천 코드를 가입 후에도 추가 입력 가능 → 다중 추천 보상
+- 탈퇴 후 재가입 시 추천인 보상 재수령
+```
+
+### 케이스 6: 한도 / 제약 우회
+
+**언제 쓰는지**: "1인 1매" / "1일 N회 한도" / "최대 N개" 같은 제약이 있는 모든 기능.
+
+**시나리오:**
+
+```
+- 1인 1매 응모 → 동일 계정에서 폼 N번 제출 (race 가 아니라 시간차 N회)
+- 1일 N회 송금 한도 → 클라이언트 시간 변조, 시간대 우회
+- 첫 구매 한정 → 환불 후 첫 구매 권한 복귀 여부
+- 무료 체험 N일 → 가입/탈퇴 반복으로 무한 체험
+- 최대 보유 수량 → 다른 액션 경유로 우회 (선물하기 → 자기에게 선물)
+```
+
+### 케이스 7: 상태 머신 위반
+
+**언제 쓰는지**: 명확한 상태 전이 (주문/결제/배송 상태) 가 있는 모든 흐름.
+
+**시나리오:**
+
+```
+[정상 전이]
+PENDING → CONFIRMED → SHIPPED → DELIVERED
+PENDING → CANCELLED
+
+[우회 시도]
+- CANCELLED → SHIPPED  (취소된 주문 발송)
+- DELIVERED → CANCELLED (배송 완료 후 취소 → 환불 + 상품 보유)
+- SHIPPED → PENDING (역방향 전이)
+- 비밀번호 변경 후에도 옛 비밀번호로 로그인 가능 (세션 미무효화는 session-management.md)
+```
+
+**판정**: 정의되지 않은 상태 전이가 가능하면 취약. 백엔드가 현재 상태를 검증하지 않고 요청된 변경만 적용.
+
+### 그 외 — 한 줄 언급만
+
+- **시간 / 타임존 변조** — 클라이언트 시간 헤더를 신뢰하는 경우 (한도 / 만료 우회). 빈도 낮음
+- **언어 / 통화 변조** — 다국어 / 다통화 서비스에서 한국 원화 결제를 베트남 동으로 처리하는 등의 환율 결함
+- **소셜 / 평가 로직** — 좋아요 / 평점 / 리뷰의 자기참조 (자기 글에 좋아요), 어뷰징
+- **인증 흐름 race** — `race-condition.md` 케이스 5
+
+---
+
+## 취약 판정 기준
+
+다음 중 **하나라도** 해당하면 취약:
+
+- [ ] 클라이언트가 보낸 가격 / 할인율 / 사용자 ID 등을 서버가 그대로 신뢰
+- [ ] 다단계 흐름의 중간 단계를 건너뛰고도 최종 상태에 도달
+- [ ] 만료 / 적용 조건 / 중첩 검증이 클라이언트 측에서만 이루어짐
+- [ ] 환불 합계가 결제 금액 초과 또는 환불 후 상품 / 권한 회수 누락
+- [ ] 동일 사용자가 N번 가입 보너스 / 추천 보상 수령
+- [ ] 1인 / 1일 한도가 N번 우회 가능
+- [ ] 정의되지 않은 상태 전이 (취소된 주문 발송 등) 가능
+
+**오탐 주의:**
+
+- [ ] 의도된 동작 (프로모션 기간 중첩, 사용자 친화 환불 정책 등) 일 수 있음 — **점검 전 비즈니스 정책 확인 필수**
+- [ ] 운영 환경에서 환불 / 결제 / 추천 보상 시나리오 시도 시 사전 협의 + 복원 계획 필수
+- [ ] 비즈니스 로직 결함은 표준 분류가 없어 보고서 등급 산정이 어려움 — 구체 금전 손실 시나리오로 입증
+
+---
+
+## PoC 양식 (보고서 붙여넣기용)
+
+### PoC 1 — [Business Logic] 클라이언트 가격 신뢰로 인한 1원 결제
+
+1. `<TARGET>` 상품 주문 요청에서 `price` 파라미터를 1로 변조
+2. 응답 200 + 주문 1원으로 생성
+3. 결제 진행 → 1,500,000원 상품을 1원에 구매 완료
+
+**요청:**
+
+```http
+POST /api/order HTTP/1.1
+Host: <TARGET>
+Cookie: SESSION=<attacker_session>
+Content-Type: application/json
+
+{
+  "product_id": 42,
+  "quantity": 1,
+  "price": 1
+}
+```
+
+**응답 — 취약 발현 증거:**
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "order_id": "ORD-2026-05-13-042",
+  "product_id": 42,
+  "product_name": "노트북 (정가 1,500,000원)",
+  "quantity": 1,
+  "price": 1,                          ← 변조된 가격 그대로 저장
+  "total": 1,
+  "status": "PENDING"
+}
+```
+
+**후속 검증 — 결제 완료:**
+
+```http
+POST /api/payment HTTP/1.1
+{"order_id": "ORD-2026-05-13-042"}
+
+HTTP/1.1 200 OK
+{"status": "COMPLETED", "amount": 1}
+```
+
+**확인 사항:**
+- 백엔드가 `product_id` 로 가격을 다시 조회하지 않고 클라이언트가 보낸 `price=1` 을 그대로 저장
+- 1,500,000원 상품이 1원에 결제 완료 + 정상 발송 흐름 진입
+- 다수 사용자가 동일 패턴으로 악용 시 상품 단위 직접 금전 손실
+- 안전 패턴: 백엔드가 `product_id` 로 마스터 가격을 조회 + 최종 결제 금액 = 마스터 가격 × 수량 - 검증된 할인. 클라이언트 가격 절대 신뢰 금지
+
+---
+
+### PoC 2 — [Business Logic] 결제 단계 우회로 무결제 주문 확정
+
+1. 정상 흐름: `cart/add → order/preview → order/create → payment → order/confirm`
+2. 4번 (결제) 건너뛰고 5번 (주문 확정) 직접 호출
+3. 결제 없이 주문 확정 + 상품 발송 흐름 진입
+
+**1차 — 주문 생성 (PENDING):**
+
+```http
+POST /api/order/create HTTP/1.1
+{...}
+
+HTTP/1.1 200 OK
+{"order_id": "ORD-001", "status": "PENDING"}
+```
+
+**2차 — 결제 단계 건너뛰고 확정 직접 호출:**
+
+```http
+POST /api/order/confirm HTTP/1.1
+Content-Type: application/json
+
+{"order_id": "ORD-001"}
+```
+
+**응답 — 취약 발현 증거:**
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "order_id": "ORD-001",
+  "status": "CONFIRMED",              ← PENDING → CONFIRMED 직접 전이
+  "payment_status": "NOT_PAID",       ← 결제 안 됨 상태 그대로
+  "shipping_status": "PREPARING"      ← 배송 준비 진입
+}
+```
+
+**확인 사항:**
+- 결제 단계 (`payment`) 호출 없이 주문 확정 (`order/confirm`) 만으로 상태 전이됨
+- 백엔드가 `confirm` 처리 시 "결제 완료 여부" 를 검증하지 않음 → 무결제 상품 발송 흐름
+- 정상 사용자 입장에선 클라이언트가 결제 → 확정 순서로 호출하지만, 직접 API 호출로 우회 가능
+- 안전 패턴: `confirm` 처리 시 `WHERE order_id = ? AND payment_status = 'PAID'` 조건으로 상태 검증
+
+---
+
+## 영향도 분석
+
+- **기밀성 (Confidentiality)**: 🟡 — 직접 정보 노출은 적음
+- **무결성 (Integrity)**: 🔴 — 금전 / 자원 / 권한 정책 무력화
+- **가용성 (Availability)**: 🟡 — 한도 우회로 자원 고갈 시
+- **추가 위협**:
+  - **직접 금전 손실** — 가격 변조 / 쿠폰 악용 / 환불 악용
+  - **자원 / 사은품 무한 수령** — 가입 보너스 다중 수령, 한도 우회
+  - **운영 신뢰도 손상** — 정책 무력화 사례가 알려지면 어뷰징 확산
+  - **법적 / 회계 이슈** — 결제 / 환불 정합성 위반은 회계 감사 / 규제 이슈로 확장
+
+**비즈니스 임팩트:**
+비즈니스 로직 결함은 자동화 도구가 못 찾고, 인증/권한/인젝션 결함과 달리 직접 금전 손실로 이어지는 경우가 많아 진단 우선순위가 높다. 도메인 이해가 필수라 진단자가 서비스 흐름을 충분히 이해한 후 시나리오를 설계해야 하며, 신규 기능 / 프로모션 / 결제 변경 시점마다 재점검이 필요한 카테고리.
+
+---
+
+## 대응방안
+
+### 개발자 관점 (필수)
+
+1. **서버 측에서 결정해야 할 값은 절대 클라이언트 입력 신뢰 금지**:
+
+   ```python
+   # 위험 — 클라이언트가 보낸 price 사용
+   def create_order(product_id, quantity, price):
+       Order.create(product_id=product_id, quantity=quantity, price=price)
+
+   # 안전 — 서버가 마스터 데이터로 가격 재계산
+   def create_order(product_id, quantity):
+       product = Product.objects.get(id=product_id)
+       total = product.price * quantity
+       discount = calculate_discount(product, request.user)     # 서버 검증
+       Order.create(product_id=product_id, quantity=quantity,
+                    unit_price=product.price, total=total - discount)
+   ```
+
+2. **상태 머신 명시 + 트랜잭션 내 상태 검증** — 모든 상태 전이 시 현재 상태를 검증:
+
+   ```sql
+   UPDATE orders SET status = 'CONFIRMED'
+   WHERE id = ? AND status = 'PAID';        -- 이전 상태가 PAID 일 때만 전이
+   -- affected rows = 0 이면 잘못된 전이 → 거부
+   ```
+
+3. **수량 / 가격 / 할인의 입력 검증** — 음수 / 0 / 매우 큰 값 / 부동소수점 거부:
+
+   ```python
+   if quantity < 1 or quantity > MAX_QUANTITY:
+       return {"error": "invalid quantity"}
+   if not isinstance(quantity, int):
+       return {"error": "quantity must be integer"}
+   ```
+
+4. **쿠폰 / 포인트 로직은 서버 단일 진실** — 만료 / 사용 횟수 / 적용 조건 / 중첩 정책 모두 서버에서 매 요청마다 검증.
+
+5. **환불 / 취소는 결제 정합성 검증** — `환불 총액 ≤ 결제 총액`, 환불 시 권한 / 상품 / 디지털 콘텐츠 회수.
+
+6. **가입 / 추천 / 한도 검증** — 이메일 정규화 (gmail 의 `+`, `.` 제거), 휴대폰 본인 인증 (CI/DI 단위 중복 체크), 추천인 = 본인 거부.
+
+7. **다단계 흐름은 서버에서 진행 상태 추적** — 클라이언트 진행률을 신뢰하지 말 것:
+
+   ```python
+   # 안전 — 각 단계마다 이전 단계 완료 여부 검증
+   def confirm_order(order_id):
+       order = Order.get(order_id)
+       if order.payment_status != 'PAID':
+           raise BusinessError('not paid')
+       order.confirm()
+   ```
+
+### 운영자 관점
+
+1. **이상 패턴 모니터링** — 비정상 결제 금액 (1원 / 음수), 환불 / 쿠폰 사용 급증, 동일 사용자 다중 가입 패턴 탐지.
+
+2. **결제 / 환불 정합성 일일 점검** — 결제 합계 vs 환불 합계 vs 매출 일치 여부.
+
+3. **프로모션 / 신규 기능 출시 시 재점검** — 비즈니스 로직 결함은 기능 추가 / 정책 변경 시점에 자주 발생.
+
+### 안전 / 위험 코드 비교 (가격 검증 예시)
+
+**Node.js (Express):**
+
+```javascript
+// 위험 — 클라이언트 price 신뢰
+app.post('/api/order', requireAuth, async (req, res) => {
+    const { product_id, quantity, price } = req.body;
+    const order = await Order.create({ product_id, quantity, price });
+    res.json(order);
+});
+
+// 안전 — 서버가 모든 가격 / 할인 계산
+app.post('/api/order', requireAuth, async (req, res) => {
+    const { product_id, quantity } = req.body;
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) {
+        return res.status(400).json({ error: 'invalid quantity' });
+    }
+
+    const product = await Product.findByPk(product_id);
+    if (!product || !product.active) {
+        return res.status(404).json({ error: 'product not found' });
+    }
+
+    const unitPrice = product.price;
+    const discount = await calculateDiscount(req.user, product);
+    const total = unitPrice * quantity - discount;
+
+    const order = await Order.create({
+        user_id: req.user.id,
+        product_id,
+        quantity,
+        unit_price: unitPrice,             // 서버에서 결정
+        discount,
+        total,
+        status: 'PENDING',
+    });
+    res.json(order);
+});
+```
+
+**Java (Spring) — 상태 머신:**
+
+```java
+// 위험 — 클라이언트가 보낸 status 그대로 적용
+@PostMapping("/orders/{id}/status")
+public Order updateStatus(@PathVariable Long id, @RequestBody StatusDto dto) {
+    Order order = orderRepo.findById(id).get();
+    order.setStatus(dto.getStatus());
+    return orderRepo.save(order);
+}
+
+// 안전 — 상태 머신 검증 + 이전 상태 조건부 UPDATE
+public class OrderService {
+
+    private static final Map<String, Set<String>> ALLOWED_TRANSITIONS = Map.of(
+        "PENDING",   Set.of("PAID", "CANCELLED"),
+        "PAID",      Set.of("CONFIRMED", "REFUNDED"),
+        "CONFIRMED", Set.of("SHIPPED", "REFUNDED"),
+        "SHIPPED",   Set.of("DELIVERED"),
+        "DELIVERED", Set.of()
+    );
+
+    @Transactional
+    public void transition(Long orderId, String toStatus) {
+        Order order = orderRepo.findByIdForUpdate(orderId);
+        if (!ALLOWED_TRANSITIONS.get(order.getStatus()).contains(toStatus)) {
+            throw new IllegalStateException(
+                "invalid transition: " + order.getStatus() + " → " + toStatus);
+        }
+        order.setStatus(toStatus);
+    }
+}
+```
+
+---
+
+## 참고자료
+
+- [OWASP Testing Guide - Business Logic Testing](https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/10-Business_Logic_Testing/)
+- [OWASP - Business Logic Vulnerability](https://owasp.org/www-community/vulnerabilities/Business_logic_vulnerability)
+- [PortSwigger - Business logic vulnerabilities](https://portswigger.net/web-security/logic-flaws)
+- [HackTricks - Login Bypass + Business Logic](https://book.hacktricks.xyz/pentesting-web/login-bypass)
+- [OWASP API Security Top 10 - API6: Unrestricted Access to Sensitive Business Flows](https://owasp.org/API-Security/editions/2023/en/0xa6-unrestricted-access-to-sensitive-business-flows/)

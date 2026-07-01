@@ -1,0 +1,10 @@
+{
+  "label": "모바일 (Mobile)",
+  "position": 2,
+  "collapsible": true,
+  "collapsed": true,
+  "link": {
+    "type": "doc",
+    "id": "assessment/mobile/index"
+  }
+}

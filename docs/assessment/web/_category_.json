@@ -1,0 +1,10 @@
+{
+  "label": "웹 (Web)",
+  "position": 1,
+  "collapsible": true,
+  "collapsed": false,
+  "link": {
+    "type": "doc",
+    "id": "assessment/web/index"
+  }
+}

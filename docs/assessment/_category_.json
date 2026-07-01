@@ -1,0 +1,10 @@
+{
+  "label": "진단 (Assessment)",
+  "position": 2,
+  "collapsible": true,
+  "collapsed": false,
+  "link": {
+    "type": "doc",
+    "id": "assessment/index"
+  }
+}
