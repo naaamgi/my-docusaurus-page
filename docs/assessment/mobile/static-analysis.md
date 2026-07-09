@@ -1,13 +1,12 @@
 ---
 sidebar_position: 5
-title: 정적 분석 (Static Analysis)
+title: 정적 분석
 description: 모바일 진단 - APK/IPA 디컴파일 (apktool / jadx / dex2jar / class-dump / Hopper / Ghidra) + 매니페스트 / 문자열 / 시크릿 점검
 keywords: [Static Analysis, apktool, jadx, dex2jar, class-dump, Hopper, Ghidra, AndroidManifest, Info.plist, MobSF, MASVS, MASTG]
 draft: false
 ---
 
-# 정적 분석 (Static Analysis)
-
+# 정적 분석
 > APK / IPA 를 디컴파일해 **실행 없이 코드 / 매니페스트 / 리소스에서 결함을 찾는 단계**.
 > 동적 분석 (Frida 후킹) 의 후킹 지점을 정하는 정찰 단계 + 그 자체로 결함 (하드코드 시크릿 / 평문 키 / 위험 권한) 을 발견.
 
@@ -71,17 +70,16 @@ apktool d target.apk -o target-decoded
 # target-decoded/smali/...            ← Dalvik 바이트코드의 smali 표현
 # target-decoded/res/                 ← 디코딩된 리소스
 
-# 재패키징 (Smali 패치 후)
+# 재패키징
 apktool b target-decoded -o target-patched.apk
 
-# 재서명 (apksigner 또는 uber-apk-signer)
+# 재서명
 uber-apk-signer -a target-patched.apk
 ```
 
 **왜 apktool 인지**: `AndroidManifest.xml` 의 위험 설정 (`debuggable`, `allowBackup`, `usesCleartextTraffic`, `exported` 컴포넌트, custom URL scheme 등) 은 디코딩 없이는 못 읽음. 또한 SSL Pinning 우회용 Smali 패치 작업의 표준 도구.
 
-### 3. jadx — Java 소스 디컴파일 (가장 자주 씀)
-
+### 3. jadx — Java 소스 디컴파일
 ```bash
 # 설치
 brew install jadx                               # macOS
@@ -89,7 +87,7 @@ brew install jadx                               # macOS
 # CLI 모드 — 전체 소스 추출
 jadx -d target-src target.apk
 
-# GUI 모드 — 인터랙티브 분석 (강력 추천)
+# GUI 모드 — 인터랙티브 분석
 jadx-gui target.apk
 ```
 
@@ -102,8 +100,7 @@ jadx-gui target.apk
 
 **왜 jadx 인지**: dex → Java 디컴파일 결과물의 가독성이 가장 좋고 검색 / 사용처 추적이 직관적. SSL Pinning 코드 위치 / Root 탐지 로직 / 시크릿 위치를 빠르게 찾을 수 있음.
 
-### 4. dex2jar + JD-GUI (대안)
-
+### 4. dex2jar + JD-GUI
 ```bash
 # dex → jar
 d2j-dex2jar target.apk -o target.jar
@@ -276,8 +273,7 @@ Hopper Disassembler 또는 Ghidra 로 TargetApp 바이너리 열기
 - SSL Pinning / 탈옥 탐지 함수의 어셈블리 분석 → 후킹 지점 확정
 - Swift 함수 (mangling 된 이름) 의 원본 식별 + 주소 확보
 
-### 5. otool / nm — 바이너리 메타데이터 (macOS 표준)
-
+### 5. otool / nm — 바이너리 메타데이터
 ```bash
 # 의존 라이브러리
 otool -L TargetApp
@@ -333,15 +329,14 @@ detect-secrets scan target-decoded/
 docker run -it --rm -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest
 
 # 브라우저: http://localhost:8000
-# APK / IPA 업로드 → 자동 분석 리포트 (매니페스트 / 권한 / 시크릿 / 위험 API 호출 / 안티 분석 등)
+# APK / IPA 업로드 → 자동 분석 리포트
 ```
 
 **언제 쓰는지**: 빠른 1차 스캔 / 보고서 기초 자료. 단, 자동화 도구의 한계 — **결과는 참고용** 이고, 실제 결함 판정은 수동 검증 필수.
 
 ---
 
-## 점검 산출물 (보고 시 포함)
-
+## 점검 산출물
 - [ ] AndroidManifest 위험 설정 목록 + 위치 (Activity 명 등)
 - [ ] Info.plist 위험 설정 목록 + 위치
 - [ ] 발견된 하드코드 시크릿 (마스킹 + 위치 + 종류)
@@ -365,13 +360,12 @@ apktool d --no-res target.apk       # 리소스 무시 (Smali / Manifest 만)
 
 → dex2jar + JD-GUI 또는 Bytecode Viewer 같은 멀티 디컴파일러로 보완. 일부 클래스는 obfuscator (DexGuard, Allatori) 로 복호화 어려움 — 동적 분석 (`frida-scripts.md` 패턴 5) 으로 클래스명 enumeration.
 
-### IPA 가 암호화 상태 (`cryptid 1`)
-
+### IPA 가 암호화 상태
 ```bash
 # 확인
 otool -arch arm64 -l TargetApp | grep -A4 LC_ENCRYPTION_INFO
-# cryptid 1   ← 암호화됨 (App Store 배포 IPA)
-# cryptid 0   ← 복호화됨 (탈옥 단말 메모리 덤프 결과)
+# cryptid 1   ← 암호화됨
+# cryptid 0   ← 복호화됨
 ```
 
 → `frida-ios-dump` 로 복호화된 IPA 추출 (`setup-ios.md` Step 5).

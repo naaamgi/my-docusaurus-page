@@ -1,13 +1,12 @@
 ---
 sidebar_position: 7
-title: 루팅 탐지 우회 (Root Detection Bypass / Android)
+title: 루팅 탐지 우회
 description: 모바일 진단 - Android 루팅 탐지 우회 (Magisk DenyList / Shamiko / Frida 후킹 / Smali 패치) + 점검 흐름 + 판정 기준
 keywords: [Root Detection, Bypass, Magisk, DenyList, Shamiko, Zygisk, RootBeer, SafetyNet, Play Integrity, Frida, Android, MASVS-RESILIENCE]
 draft: false
 ---
 
-# 루팅 탐지 우회 (Root Detection Bypass / Android)
-
+# 루팅 탐지 우회
 > 앱이 루팅 단말에서 실행을 거부할 때 우회. 점검자 입장에서는 **점검 환경 구성의 일부** + 점검 결과로 "Bypass-resistant 한가" 평가.
 > 우회 가능 ≠ Pinning 처럼 즉시 미흡 — 단, 표준 도구로 한 번에 우회되면 MASVS-RESILIENCE 미흡.
 
@@ -64,8 +63,7 @@ draft: false
    - 일부 기능만 차단 (예: 결제, 출금)  → 부분 탐지
 ```
 
-### Step 2. 탐지 위치 식별 (정적 분석)
-
+### Step 2. 탐지 위치 식별
 `static-analysis.md` 의 jadx 검색 키워드:
 
 ```
@@ -80,8 +78,7 @@ draft: false
   - "SafetyNetClient", "IntegrityManager"            → 서버 사이드 검증
 ```
 
-### Step 3. 우회 시도 (난이도 순)
-
+### Step 3. 우회 시도
 (1) Magisk DenyList + Shamiko → (2) Objection / Frida 표준 → (3) 자체 구현 후킹 → (4) Smali 패치 → (5) 서버 사이드 (Play Integrity) 결합 시 사실상 불가.
 
 ### Step 4. 우회 후 검증
@@ -93,8 +90,7 @@ draft: false
 
 ## 페이로드 / 우회 케이스
 
-### 케이스 1: Magisk DenyList + Zygisk + Shamiko (실무 표준, 가장 강력)
-
+### 케이스 1: Magisk DenyList + Zygisk + Shamiko
 **언제 쓰는지**: Magisk 24+ 기준. 일반 앱 대부분의 root 탐지를 시스템 레벨에서 숨김 — Frida 사용 없이 우회 가능.
 
 **적용:**
@@ -125,8 +121,7 @@ objection -g com.target.app explore
 
 **판정**: 명령 적용 후 앱 정상 동작이면 표준 라이브러리 / 흔한 패턴. 안 먹으면 케이스 3 (자체 구현 후킹).
 
-### 케이스 3: Frida 통합 스크립트 (자체 구현 + 라이브러리 일괄)
-
+### 케이스 3: Frida 통합 스크립트
 **언제 쓰는지**: Magisk DenyList + Objection 으로도 안 되고, 정적 분석에서 자체 구현 탐지가 보일 때.
 
 ```javascript
@@ -218,15 +213,14 @@ frida -U -f com.target.app -l android-root-bypass.js --no-pause
 
 **판정**: 콘솔에 `[+] ... blocked / hidden / spoofed` 메시지 + 앱 정상 동작이면 자체 구현 탐지 우회 성공. 보고서에 우회 가능한 신호 목록 기록.
 
-### 케이스 4: Smali 패치 (Frida 차단 환경)
-
+### 케이스 4: Smali 패치
 **언제 쓰는지**: 앱이 Frida 도 탐지 (`anti-debug-bypass.md` 우회로 해결 안 됨) 또는 회사 정책상 Frida 미사용.
 
 ```bash
 # 1) APK 디컴파일
 apktool d target.apk -o target-decoded
 
-# 2) jadx 로 탐지 함수 식별 (예: com.target.security.RootCheck.isDeviceRooted)
+# 2) jadx 로 탐지 함수 식별
 # 3) 해당 .smali 파일에서 메서드를 항상 false 반환으로 변경:
 
 # target-decoded/smali/com/target/security/RootCheck.smali
@@ -247,8 +241,7 @@ adb install target-patched-aligned-debugSigned.apk
 
 **판정**: 패치된 앱이 정상 실행 + 차단 기능 (결제 등) 도 동작. **단, 앱이 서명 검증 (Signature Check) 까지 적용** 했으면 추가 패치 필요.
 
-### 케이스 5: SafetyNet / Play Integrity (서버 사이드)
-
+### 케이스 5: SafetyNet / Play Integrity
 **언제 쓰는지**: 앱이 단말 무결성을 Google API 로 검증하는 경우. 서버에서 검증되므로 클라이언트 후킹으로 우회 불가능.
 
 **관찰만 — 우회는 제한적:**
@@ -268,8 +261,7 @@ Java.perform(function () {
 
 **판정**: SafetyNet / Play Integrity 가 적용된 앱 = MASVS-RESILIENCE 측면에서 우수. 보고서에 긍정 평가 + 추가 미흡 없음.
 
-### 케이스 6: 루팅 탐지 미적용 (Negative case)
-
+### 케이스 6: 루팅 탐지 미적용
 **판정**: 루팅 단말에서 정상 동작 + 정적 분석에서 탐지 코드 부재 → 탐지 미적용. 단, **앱 성격에 따라 미적용이 정상** (정보 제공 앱 / 비결제 앱). 결제 / 금융 / 의료 / 인증 앱은 미흡으로 보고.
 
 ---
@@ -290,132 +282,6 @@ Java.perform(function () {
 - [ ] 정보 제공 앱 / 단순 유틸 앱은 루팅 탐지 미적용이 정상 — 회사 정책 / 위험도에 따라 판정
 - [ ] 일부 앱은 루팅 단말에서 경고만 (실행은 허용) — 미흡 아닐 수 있음
 - [ ] Play Integrity 적용 시 클라이언트 후킹 우회 불가 — 우수 평가
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-### PoC 1 — [Root Detection] Frida 단일 스크립트로 자체 구현 탐지 우회
-
-1. `setup-android.md` 의 루팅 단말 환경 셋업 완료
-2. 점검 대상 앱 (`com.target.app`) 실행 → 즉시 "보안 정책 위반" 메시지 후 종료
-3. `static-analysis.md` 의 jadx 로 `com.target.security.RootCheck.isDeviceRooted` 위치 확인
-4. 케이스 3 의 통합 Frida 스크립트 적용 → `File.exists` / `Runtime.exec` / `RootBeer` 후킹
-5. 앱 정상 실행 + 결제 기능 정상 동작
-
-**1차 — 우회 전 (탐지 동작):**
-
-```
-앱 실행 → 스플래시 → "본 앱은 루팅된 기기에서 실행할 수 없습니다" → 강제 종료
-```
-
-**2차 — Frida 스크립트 적용:**
-
-```bash
-$ frida -U -f com.target.app -l android-root-bypass.js --no-pause
-[+] File.exists blocked: /system/xbin/su
-[+] File.exists blocked: /sbin/.magisk
-[+] PackageInfo hidden: com.topjohnwu.magisk
-[+] Runtime.exec blocked: which su
-[+] RootBeer.isRooted spoofed: false
-```
-
-**3차 — 우회 후:**
-
-```
-앱 정상 실행 → 로그인 → 결제 화면 진입 가능
-( 결제 화면 ↔ 백엔드 API 통신은 ssl-pinning-bypass.md 와 결합해 점검 진행 )
-```
-
-**확인 사항:**
-- 클라이언트 단일 신호 기반 탐지 — 표준 Frida 스크립트 단일 실행으로 모두 우회 가능
-- Bypass-resistant 부재 (Native 결합 / 무결성 검증 / 서버 사이드 검증 모두 없음)
-- 우회 후 결제 / 인증 기능 동작 → 루팅 단말 + 우회 환경에서 자격증명 / 결제 정보 노출 가능
-- 권장: SafetyNet / Play Integrity 도입 + Native 탐지 + 다중 신호 결합
-
----
-
-## 영향도 분석
-
-- **기밀성 (Confidentiality)**: 🟡 — 루팅 탐지 우회 자체는 직접 영향 없음. 우회 환경에서 다른 점검 (Frida 후킹 / 데이터 추출) 이 가능해지는 게 본질
-- **무결성 (Integrity)**: 🟡 — 우회 후 메모리 변조 / 앱 동작 변경 가능
-- **추가 위협**:
-  - 루팅 탐지 미흡 + SSL Pinning 우회 가능 + 평문 데이터 저장 결합 → 자격증명 / 결제 정보 탈취
-  - 악성 앱이 루팅 단말에서 점검 대상 앱의 메모리 / 데이터 접근 → 광범위 영향
-  - Play Integrity 부재 → 자동화된 봇 / 매크로 / 부정 거래 자동화 용이
-
-**비즈니스 임팩트:**
-루팅 탐지는 단독 결함이 아니라 **다른 결함 + 악성 사용자 / 분석가 환경 차단** 의 방어 레이어. 결제 / 금융 / 인증 앱에서 탐지가 미흡하면 부정 거래 / 자동화 봇 / 자격증명 탈취의 가능성이 크게 올라간다. **서버 사이드 Play Integrity + 클라이언트 다중 신호 결합** 이 권장 패턴.
-
----
-
-## 대응방안
-
-### 개발자 관점
-
-1. **서버 사이드 Play Integrity API** — 클라이언트 후킹으로 우회 불가능한 유일한 방법.
-
-   ```kotlin
-   val integrityManager = IntegrityManagerFactory.create(applicationContext)
-   val nonce = generateNonce()   // 서버에서 발급
-   val integrityTokenResponse = integrityManager.requestIntegrityToken(
-       IntegrityTokenRequest.builder().setNonce(nonce).build()
-   )
-   // integrityToken 을 서버로 전송 → 서버에서 Google API 로 검증
-   ```
-
-2. **클라이언트 다중 신호 결합** — 단일 함수 후킹으로 우회되지 않도록:
-   - File 시스템 검사 + Runtime.exec + PackageManager + SystemProperties + Build.TAGS + Native 검사
-   - **각 신호의 결과를 XOR / 해시 결합** → 단일 후킹으로 무력화 안 되도록
-
-3. **Native (C/C++) 로 검사 + 무결성 검증** — Java 후킹만으로 안 되도록.
-
-4. **앱 서명 검증 (Tamper Detection)** — 재패키징 차단:
-
-   ```kotlin
-   val info = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
-   val signature = info.signatures[0].toCharsString()
-   if (signature != EXPECTED_SIGNATURE_HASH) {
-       // 변조됨
-   }
-   ```
-   ⚠️ 이 검사 자체도 Frida 로 후킹되므로 Native + 다중 검증 결합.
-
-5. **차단 기능은 서버에서 차단** — 클라이언트가 "차단" 을 결정하지 말고, 서버 API 가 `integrity_token` 을 검증하지 않으면 거래 거부. 클라이언트는 단지 토큰을 함께 보낼 뿐.
-
-### 운영자 관점
-
-1. **Play Integrity 검증 로그 모니터링** — 비정상 비율이 갑자기 올라가면 우회 도구 보급 / 캠페인 가능성.
-2. **위험도 기반 인증 (Risk-based Auth)** — 루팅 단말 + 신규 디바이스 + 비정상 위치 등 결합 시 추가 인증 / 차단.
-
-### 안전 / 위험 코드 비교
-
-**위험 — 단일 함수 검사:**
-
-```java
-public static boolean isRooted() {
-    return new File("/system/xbin/su").exists();   // ← 한 줄 후킹으로 우회
-}
-```
-
-**안전 — 다중 신호 + Native + 서버 검증:**
-
-```kotlin
-// 클라이언트: 다중 신호 (Java + Native)
-val rootSignals = listOf(
-    checkSuBinary(),               // Java
-    checkMagiskInstalled(),        // Java
-    checkSystemProperties(),       // Java
-    nativeRootCheck(),             // C/C++ JNI
-    rootBeer.isRooted              // 라이브러리
-)
-// 단순 boolean 이 아닌 점수 / 신뢰도 결합
-
-// 서버 사이드: Play Integrity 토큰 검증 (필수)
-suspend fun verifyIntegrity(token: String): VerdictResult {
-    return playIntegrityServer.verify(token)   // Google API
-}
-```
 
 ---
 

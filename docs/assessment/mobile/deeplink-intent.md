@@ -1,13 +1,12 @@
 ---
 sidebar_position: 13
-title: Deep Link / Intent (Deep Link & Intent Issues)
+title: Deep Link / Intent
 description: 모바일 진단 - Android Intent Redirection / Exported Components / iOS Custom URL Scheme / Universal Link / 외부 호출 컴포넌트 점검
 keywords: [Deep Link, Intent, Custom URL Scheme, Universal Link, Intent Redirection, Exported Components, App Links, MASVS-PLATFORM, Android, iOS]
 draft: false
 ---
 
-# Deep Link / Intent (Deep Link & Intent Issues)
-
+# Deep Link / Intent
 > 다른 앱 / 외부 URL 이 점검 대상 앱의 내부 화면 / 액션을 **인증 없이 직접 호출** 하거나 **파라미터를 변조** 해 인증·인가 / 비즈니스 로직 / WebView 결합 결함으로 이어지는 영역.
 > 모바일에서 가장 빈번하게 발견되는 영역 중 하나 — 매니페스트 / Info.plist 만 봐도 1차 점검 가능.
 
@@ -62,8 +61,7 @@ draft: false
 
 ## 진단 절차
 
-### Step 1. 매니페스트 / Info.plist 점검 (정적 1차)
-
+### Step 1. 매니페스트 / Info.plist 점검
 **Android (AndroidManifest.xml):**
 
 ```xml
@@ -112,11 +110,11 @@ draft: false
 # 1) 모든 exported 컴포넌트 목록
 aapt dump xmltree target.apk AndroidManifest.xml | grep -i "exported\|scheme\|host"
 
-# 2) 직접 호출 (Activity / Service / Receiver / Provider)
+# 2) 직접 호출
 # Custom URL Scheme
 adb shell am start -a android.intent.action.VIEW -d "myapp://open/admin"
 
-# Activity 직접 호출 (intent-filter 무시)
+# Activity 직접 호출
 adb shell am start -n com.target.app/.AdminActivity
 adb shell am start -n com.target.app/.WebActivity --es url "https://attacker.com"
 
@@ -136,10 +134,10 @@ adb shell content query --uri content://com.target.provider/users
 # 시뮬레이터
 xcrun simctl openurl booted "myapp://open/admin?token=ATTACKER"
 
-# 실기기 (탈옥 후 SSH)
+# 실기기
 uiopen "myapp://open/admin?token=ATTACKER"
 
-# 또는 다른 앱에서 호출 (테스트 앱 만들거나 메모장에 URL 붙여넣고 탭)
+# 또는 다른 앱에서 호출
 ```
 
 ### Step 3. 인증 / 인가 / 파라미터 검증 확인
@@ -237,8 +235,7 @@ adb shell content insert --uri content://com.target.provider/users --bind user_i
 
 **판정**: 외부에서 임의 호출 + 인증 / 권한 / 파라미터 검증 없으면 미흡 (High ~ Critical).
 
-### 케이스 4 (Android): App Links autoVerify 누락 → 다른 앱이 같은 스킴 등록 (가로채기)
-
+### 케이스 4 (Android): App Links autoVerify 누락 → 다른 앱이 같은 스킴 등록
 **언제 점검하는지**: 매니페스트의 `<intent-filter>` 에 `https://target.com/...` 가 있지만 `autoVerify="true"` 가 없을 때.
 
 ```xml
@@ -261,8 +258,7 @@ adb shell content insert --uri content://com.target.provider/users --bind user_i
 
 **판정**: `autoVerify="true"` + `apple-app-site-association` 같은 `assetlinks.json` 검증 없이는 가로채기 가능. 인증코드 / OAuth callback 등 민감 콜백이 이 패턴이면 Critical.
 
-### 케이스 5 (Android): Pending Intent — `FLAG_IMMUTABLE` 누락 (Android 12 미만)
-
+### 케이스 5 (Android): Pending Intent — `FLAG_IMMUTABLE` 누락
 **언제 점검하는지**: 푸시 알림 / 위젯 / 알람 등에서 Pending Intent 사용.
 
 **위험 코드:**
@@ -301,7 +297,7 @@ func application(_ application: UIApplication,
 # 시뮬레이터
 xcrun simctl openurl booted "myapp://payment?amount=1000000"
 
-# 실기기 (탈옥)
+# 실기기
 uiopen "myapp://payment?amount=1000000"
 ```
 
@@ -386,227 +382,6 @@ adb shell am start -a android.intent.action.VIEW -d "myapp://web?url=https://att
 - [ ] `LAUNCHER` intent-filter 만 있는 Activity 는 외부 호출 불가 — `exported="true"` 정상
 - [ ] `BIND_JOB_SERVICE` / `BIND_INPUT_METHOD` 등 시스템 권한이 필요한 컴포넌트는 외부 임의 호출 불가
 - [ ] iOS Universal Link 가 정상 적용된 경우 다른 앱 가로채기 불가 (AASA 가 보호)
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-### PoC 1 — [Deep Link / Android] 미인증 딥링크 호출로 결제 화면 진입 + 금액 파라미터 변조
-
-1. `static-analysis.md` 의 apktool 결과로 `<data android:scheme="myapp"/>` + `PaymentActivity` 의 `getIntent().getData()` 처리 확인
-2. 앱 강제 로그아웃 후 종료
-3. ADB 로 딥링크 직접 호출 → 미인증 상태에서 결제 화면 진입 + 금액 변조
-
-**1차 — 매니페스트 위험 설정:**
-
-```xml
-<activity android:name=".LinkHandlerActivity" android:exported="true">
-    <intent-filter>
-        <action android:name="android.intent.action.VIEW"/>
-        <category android:name="android.intent.category.BROWSABLE"/>
-        <data android:scheme="myapp"/>
-    </intent-filter>
-</activity>
-```
-
-**2차 — 위험 코드 (jadx 결과):**
-
-```java
-// LinkHandlerActivity.onCreate
-Uri data = getIntent().getData();
-if (data != null && "payment".equals(data.getHost())) {
-    Intent i = new Intent(this, PaymentActivity.class);
-    i.putExtra("amount", data.getQueryParameter("amount"));
-    startActivity(i);    // 인증 검증 없음
-}
-```
-
-**3차 — 직접 호출:**
-
-```bash
-$ adb shell pm clear com.target.app          # 강제 로그아웃 / 세션 초기화
-$ adb shell am start -a android.intent.action.VIEW -d "myapp://payment?amount=999999999"
-Starting: Intent { act=android.intent.action.VIEW dat=myapp://payment?amount=999999999 ... }
-```
-
-**4차 — 결과:**
-
-```
-앱 화면: "결제 999,999,999 원 진행" — 로그인 화면 없이 결제 진입
-백엔드 API 호출 흐름은 ssl-pinning-bypass.md 우회 후 점검 — 서버 측 토큰 / 금액 검증 추가 확인
-```
-
-**확인 사항:**
-- 딥링크 진입 시 클라이언트에서 인증 / 세션 검증 부재 → 미인증 상태로 민감 화면 진입
-- 금액 파라미터가 클라이언트에서 그대로 사용됨 → 서버 측 검증 없으면 실제 결제 금액 변조 가능
-- OAuth / 인증 콜백 등에 동일 패턴이면 토큰 가로채기 위험
-- 안전 패턴: (1) 딥링크 진입점에서 세션 검증 → 미인증 시 로그인 후 리다이렉트, (2) 금액 / 권한 등 민감 파라미터는 서버에서 결정, (3) 인증 콜백은 Custom Scheme 대신 App Links (`autoVerify="true"`) + 서버 사이드 nonce 검증
-
----
-
-## 영향도 분석
-
-- **기밀성 (Confidentiality)**: 🔴 — Exported Provider / Intent Redirection 으로 내부 데이터 노출, OAuth 콜백 가로채기로 토큰 탈취
-- **무결성 (Integrity)**: 🔴 — 임의 컴포넌트 호출로 권한 변경 / 결제 / 인증 액션 변조
-- **추가 위협**:
-  - **딥링크 + WebView 결합** → 피싱 / Native 메서드 호출 (`webview-issues.md`)
-  - **인증 콜백 가로채기** → OAuth / SSO 토큰 탈취 → 계정 탈취
-  - **Intent Redirection + 시스템 권한 컴포넌트** → 권한 상승
-  - **Exported Provider** → 사용자 데이터 / 내부 캐시 노출
-
-**비즈니스 임팩트:**
-딥링크 / 인텐트 결함은 매니페스트 / Info.plist 만 보고도 1차 점검 가능 — 실무에서 가장 빠르게 점검 가능한 영역. 단, **WebView / 인증 / 결제와 결합 시 영향 매우 큼** — 보고서엔 결합 시나리오까지 명시.
-
----
-
-## 대응방안
-
-### 개발자 관점 (Android)
-
-1. **딥링크 진입점에서 세션 검증:**
-
-   ```java
-   protected void onCreate(Bundle savedInstanceState) {
-       super.onCreate(savedInstanceState);
-       Uri data = getIntent().getData();
-
-       if (!SessionManager.isLoggedIn()) {
-           // 딥링크 정보를 들고 로그인 화면으로
-           Intent i = new Intent(this, LoginActivity.class);
-           i.setData(data);   // 로그인 후 복귀
-           startActivity(i);
-           finish();
-           return;
-       }
-       // 인증 후에만 처리
-       handleDeepLink(data);
-   }
-   ```
-
-2. **Exported 최소화 + 권한 / Signature 권한:**
-
-   ```xml
-   <!-- 외부 호출이 필요 없으면 exported=false -->
-   <activity android:name=".AdminActivity" android:exported="false"/>
-
-   <!-- 내부 시스템 컴포넌트 간 호출만 필요하면 signature 권한 -->
-   <permission android:name="com.target.app.permission.INTERNAL"
-               android:protectionLevel="signature"/>
-   <service android:name=".InternalService"
-            android:exported="true"
-            android:permission="com.target.app.permission.INTERNAL"/>
-   ```
-
-3. **Intent Redirection 방어:**
-
-   ```java
-   // 받은 Intent 의 extras 를 startActivity 로 직접 실행 금지
-   // 필요하면 component / package 화이트리스트 검증
-   Intent forward = getIntent().getParcelableExtra("forward");
-   if (forward != null) {
-       ComponentName cn = forward.resolveActivity(getPackageManager());
-       if (cn != null && getPackageName().equals(cn.getPackageName()) &&
-           ALLOWED_FORWARD_ACTIVITIES.contains(cn.getClassName())) {
-           startActivity(forward);
-       }
-   }
-   ```
-
-4. **App Links — `autoVerify="true"` + `assetlinks.json`:**
-
-   ```xml
-   <intent-filter android:autoVerify="true">
-       <action android:name="android.intent.action.VIEW"/>
-       <category android:name="android.intent.category.BROWSABLE"/>
-       <data android:scheme="https" android:host="target.com"/>
-   </intent-filter>
-   ```
-
-   ```json
-   // https://target.com/.well-known/assetlinks.json
-   [{
-     "relation": ["delegate_permission/common.handle_all_urls"],
-     "target": {
-       "namespace": "android_app",
-       "package_name": "com.target.app",
-       "sha256_cert_fingerprints": ["AA:BB:..."]
-     }
-   }]
-   ```
-
-5. **PendingIntent — `FLAG_IMMUTABLE`:**
-
-   ```java
-   PendingIntent pi = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE);
-   ```
-
-### 개발자 관점 (iOS)
-
-1. **`application(_:open:options:)` 세션 검증 + `sourceApplication` 검증:**
-
-   ```swift
-   func application(_ application: UIApplication,
-                    open url: URL,
-                    options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-       guard SessionManager.shared.isLoggedIn else {
-           SessionManager.shared.pendingDeepLink = url
-           navigationController.show(LoginViewController())
-           return true
-       }
-       // (선택) 신뢰 가능한 출처에서만 처리
-       let source = options[.sourceApplication] as? String
-       guard ALLOWED_SOURCES.contains(source ?? "") else { return false }
-
-       handleDeepLink(url)
-       return true
-   }
-   ```
-
-2. **OAuth / SSO 콜백은 Universal Link 사용** (Custom URL Scheme 가로채기 방지).
-
-3. **`apple-app-site-association` 정확히 설정:**
-
-   ```json
-   {
-     "applinks": {
-       "details": [{
-         "appIDs": ["TEAMID.com.target.app"],
-         "components": [
-           { "/": "/payment/*",  "comment": "결제만" },
-           { "/": "/account/*",  "comment": "계정만" }
-         ]
-       }]
-     }
-   }
-   ```
-   `/` 와일드카드 광범위 사용 금지.
-
-### 운영자 관점
-
-1. **딥링크 인벤토리** — 모든 딥링크 URL 패턴 + 진입 화면 + 인증 요구 여부 인벤토리 유지.
-2. **App Links / Universal Link 검증 도구** — Google / Apple 의 검증 도구로 주기 검사.
-
-### 위험 / 안전 코드 비교
-
-**Android — 위험 (인증 없음):**
-
-```java
-Uri data = getIntent().getData();
-if (data.getHost().equals("payment")) {
-    startActivity(new Intent(this, PaymentActivity.class));   // ← 인증 검증 없음
-}
-```
-
-**iOS — 위험 (URL Scheme + 검증 없음):**
-
-```swift
-func application(_ app: UIApplication, open url: URL, options: ...) -> Bool {
-    if url.host == "payment" {
-        navigationController.push(PaymentViewController())     // ← 인증 검증 없음
-    }
-    return true
-}
-```
 
 ---
 

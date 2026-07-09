@@ -1,13 +1,12 @@
 ---
 sidebar_position: 17
-title: 인증 (Authentication)
-description: 웹 진단 - 사용자 열거, 무차별 대입, 비밀번호 정책, 재설정 플로우, MFA 우회, 인증 우회 점검 절차와 보고서 양식
+title: 인증
+description: 웹 진단 - 사용자 열거, 무차별 대입, 비밀번호 정책, 재설정 플로우, MFA 우회, 인증 우회 점검 절차와 판정 기준
 keywords: [인증, Authentication, Brute Force, 사용자열거, Username Enumeration, MFA, OTP, 비밀번호 재설정, OWASP A07]
 draft: false
 ---
 
-# 인증 (Authentication)
-
+# 인증
 > 로그인·가입·비밀번호 변경/재설정·MFA 등 **인증 메커니즘 자체** 가 무차별 대입·우회·취약 정책으로부터 보호되는지 점검.
 > 단일 결함도 관리자 계정 탈취로 이어질 수 있어 점검 항목 다수가 Critical/High 로 분류됨.
 
@@ -93,8 +92,7 @@ Burp Intruder로 다음 시도, **시도 횟수 제한 / 계정 잠금 / IP 차�
 
 ## 페이로드 / 테스트 케이스
 
-### 케이스 1: 사용자 열거 (Username Enumeration)
-
+### 케이스 1: 사용자 열거
 **언제 쓰는지**: 어떤 인증 폼이든 첫 점검 항목. 열거가 가능하면 무차별 대입의 효율이 크게 올라가 위험도가 동반 상승.
 
 **비교 시나리오:**
@@ -115,8 +113,7 @@ Burp Intruder로 다음 시도, **시도 횟수 제한 / 계정 잠금 / IP 차�
 
 > 응답 시간 차이는 네트워크 변동 가능성이 있으므로 **20회 이상 반복** 후 평균/분산으로 판단. Burp Intruder + 타이밍 측정.
 
-### 케이스 2: 기본 자격증명 (Default Credentials)
-
+### 케이스 2: 기본 자격증명
 **언제 쓰는지**: 점검 시작 시 항상 시도. 어드민 페이지/관리자 계정에서 자주 발견.
 
 ```
@@ -272,7 +269,7 @@ Content-Type: application/json
 POST /api/mfa/verify HTTP/1.1
 {"otp": "000000"}
 
-# 정상 응답 (실패)
+# 정상 응답
 HTTP/1.1 200 OK
 {"success": false}
 
@@ -283,8 +280,7 @@ HTTP/1.1 200 OK
 
 **판정**: 변조된 응답으로 인증된 페이지에 접근 가능하면, 백엔드가 응답에 의존하는 잘못된 흐름. 드물지만 SPA + 잘못된 토큰 발급 흐름에서 발견됨.
 
-### 케이스 9: 인증 우회 (Authentication Bypass)
-
+### 케이스 9: 인증 우회
 **언제 쓰는지**: 추측 가능한 인증 필요 경로 직접 접근 / JS만 권한 체크하는 케이스.
 
 ```
@@ -316,205 +312,6 @@ GET /dashboard.html                (정적 HTML이 인증 체크 안 함)
 
 - [ ] 응답 시간 차이는 네트워크 변동 가능성 — 20회 이상 반복 후 통계로 판단
 - [ ] CAPTCHA가 나오기 전 일정 횟수는 허용되는 게 정상 동작 (단, 횟수가 50+ 이면 부족)
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-### PoC 1 — [사용자 열거] 로그인 응답 메시지 차이
-
-1. `<TARGET>/login` 에 존재하는 ID(`admin`) + 임의 비밀번호로 로그인 시도
-2. 동일 위치에 존재하지 않는 ID(`nonexistent_xxx`) + 임의 비밀번호로 로그인 시도
-3. 두 응답 비교
-
-**요청 (존재하는 계정):**
-
-```http
-POST /login HTTP/1.1
-Host: <TARGET>
-Content-Type: application/x-www-form-urlencoded
-
-userid=admin&password=wrongpw
-```
-
-**응답:**
-
-```http
-HTTP/1.1 200 OK
-{"error":"비밀번호가 일치하지 않습니다."}
-```
-
-**요청 (미존재 계정):**
-
-```http
-POST /login HTTP/1.1
-Host: <TARGET>
-Content-Type: application/x-www-form-urlencoded
-
-userid=nonexistent_xxx&password=wrongpw
-```
-
-**응답:**
-
-```http
-HTTP/1.1 200 OK
-{"error":"존재하지 않는 사용자입니다."}
-```
-
-**확인 사항:**
-- 두 응답 메시지가 다름 → 사용자 존재 여부가 식별 가능
-- 이를 활용해 가입자 ID 사전(`admin`, `manager`, `test`, ...) 으로 유효 계정 목록 수집 가능 (별첨 Burp Intruder 결과)
-
----
-
-### PoC 2 — [MFA 우회] OTP 무차별 (시도 횟수 제한 미적용)
-
-1. `<TARGET>/login` 에 정상 로그인 (1단계 통과 후 OTP 입력 화면 도달)
-2. OTP 검증 엔드포인트로 6자리 숫자를 1000회 이상 무차별 시도
-3. 차단 없이 정확한 OTP 발견 시 인증 통과
-
-**요청 (Burp Intruder, 6자리 숫자 페이로드):**
-
-```http
-POST /api/mfa/verify HTTP/1.1
-Host: <TARGET>
-Cookie: STAGE1_SESSION=abcd1234
-Content-Type: application/json
-
-{"otp":"§000000§"}
-```
-
-**응답 (1000회 시도 후에도 차단 없음):**
-
-```http
-HTTP/1.1 200 OK
-{"success":false}
-```
-
-**요청 (정확한 OTP 시도):**
-
-```http
-{"otp":"483921"}
-```
-
-**응답 — 취약 발현 증거:**
-
-```http
-HTTP/1.1 200 OK
-Set-Cookie: SESSION=fully_authenticated_session; HttpOnly
-{"success":true,"redirect":"/dashboard"}
-```
-
-**확인 사항:**
-- OTP 시도 횟수 제한 / 만료 / 잠금 모두 미적용 — 1000회 이상 시도해도 차단되지 않음
-- 6자리 OTP 는 이론상 5분 안에 100만회 시도가 가능하므로 사실상 무방비
-- 정확한 OTP 발견 시 정상 세션 쿠키 발급되어 인증된 모든 기능에 접근 가능
-
----
-
-## 영향도 분석
-
-- **기밀성 (Confidentiality)**: 🔴 — 계정 탈취 시 사용자 개인정보 노출. 관리자 탈취 시 전사용자 정보 노출.
-- **무결성 (Integrity)**: 🔴 — 탈취된 계정으로 데이터 변조, 권한 부여, 결제 등 임의 액션 수행.
-- **가용성 (Availability)**: 🟡 — 계정 잠금 정책 악용 시 정상 사용자 대규모 잠금 (DoS).
-- **추가 위협**:
-  - **관리자 계정 탈취** → 시스템 전체 침해
-  - **사용자 열거 → 외부 유출 자격증명 재사용 (Credential Stuffing)** 으로 대량 계정 탈취
-
-**비즈니스 임팩트:**
-인증 결함은 보고서에서 항상 우선순위 최상위로 다뤄진다. 단일 사용자 열거조차 외부 유출된 자격증명과 결합되면 대규모 계정 탈취로 이어지며, 관리자 계정 탈취는 사실상 시스템 전체 침해와 동일하게 평가된다. 기본 자격증명·MFA 우회 발견 시 무조건 Critical.
-
----
-
-## 대응방안
-
-### 개발자 관점 (필수)
-
-1. **응답 일관성** — 사용자 열거 방지:
-   - 모든 인증 실패 응답은 단일 메시지 (`"아이디 또는 비밀번호가 일치하지 않습니다"`)
-   - 미존재 계정도 비밀번호 해시 검증과 동일한 시간 소요시키기 (dummy bcrypt 호출)
-   - 회원가입 중복 체크는 응답 메시지 대신 메일 인증 흐름으로 (이미 가입된 메일이면 "이미 가입된 계정으로 안내 메일을 보냈습니다")
-
-2. **시도 횟수 제한** — IP + 계정 단위 모두 적용:
-   - 점진적 지연 (exponential backoff): 5회 실패 후 10초, 10회 후 1분, 20회 후 1시간
-   - CAPTCHA 도입 (5회 실패 후)
-   - 비밀번호와 OTP는 **각각 별도 카운터** 가 아니라 **통합 카운터**
-
-3. **비밀번호 정책** — NIST SP 800-63B 기준:
-   - 최소 8자 (권장 12자 이상)
-   - 흔한 비밀번호 사전(`rockyou`, HIBP 등) 차단
-   - 본인 정보(ID, 이메일, 이름) 와 다름
-   - 주기적 강제 변경은 **권고하지 않음** (NIST는 폐지)
-
-4. **비밀번호 저장** — bcrypt(cost 10+) / argon2id 사용. MD5/SHA-1/SHA-256 단독 사용 금지.
-
-5. **비밀번호 변경** — 현재 비밀번호 검증 필수, 변경 후 다른 활성 세션 모두 무효화.
-
-6. **재설정 토큰** — 충분한 엔트로피(`secrets.token_urlsafe(32)` 이상), 단기 만료(15분~1시간), 1회성, 사용 후 즉시 폐기.
-
-7. **Host Header 검증** — 메일 본문의 절대 URL은 환경변수/설정 기반으로 생성, 절대 Host 헤더 사용 금지:
-
-   ```python
-   # 위험
-   reset_url = f"https://{request.host}/reset?token={token}"
-   # 안전
-   reset_url = f"{settings.PUBLIC_BASE_URL}/reset?token={token}"
-   ```
-
-8. **MFA 강제** — 모든 인증된 액션에서 세션이 MFA 통과했는지 검증. 1단계 세션과 2단계 세션을 별도 토큰으로 구분.
-
-9. **OTP 시도 제한** — 5회 실패 시 OTP 무효화 + 새로 발급. OTP 자체 만료 5분 이내.
-
-### 운영자 관점
-
-1. **WAF 룰** — 무차별 대입 패턴(동일 IP/계정에서 분당 100+ 요청) 탐지·차단.
-2. **이상 징후 알람** — 로그인 실패 급증, 비정상 위치 로그인(geolocation), 관리자 계정 활동 알림.
-3. **Credential Stuffing 모니터링** — HIBP API 등으로 유출된 자격증명 재사용 탐지.
-
-### 안전 / 위험 코드 비교
-
-**사용자 열거 방지 (Python):**
-
-```python
-# 위험 — 메시지가 다르고, 응답 시간도 다름
-user = User.query.filter_by(userid=userid).first()
-if not user:
-    return jsonify({"error": "존재하지 않는 사용자"}), 404
-if not bcrypt.check(password, user.password_hash):
-    return jsonify({"error": "비밀번호 불일치"}), 401
-
-# 안전 — 메시지 통일 + dummy bcrypt 로 시간 일관화
-DUMMY_HASH = bcrypt.hash("dummy_for_timing")  # 앱 시작 시 1회 생성
-
-user = User.query.filter_by(userid=userid).first()
-target_hash = user.password_hash if user else DUMMY_HASH
-ok = bcrypt.check(password, target_hash)
-if not user or not ok:
-    return jsonify({"error": "아이디 또는 비밀번호가 일치하지 않습니다"}), 401
-```
-
-**재설정 토큰 생성:**
-
-```python
-# 위험 — 추측 가능
-import time
-token = str(int(time.time()))             # timestamp
-token = str(uuid.uuid1())                 # uuid1 은 MAC 주소 기반, 추측 가능
-
-# 안전 — 충분한 엔트로피
-import secrets
-token = secrets.token_urlsafe(32)         # 256bit
-```
-
-**Host Header 검증 (Node.js):**
-
-```javascript
-// 위험
-const resetUrl = `https://${req.headers.host}/reset?token=${token}`;
-
-// 안전
-const resetUrl = `${process.env.PUBLIC_BASE_URL}/reset?token=${token}`;
-```
 
 ---
 

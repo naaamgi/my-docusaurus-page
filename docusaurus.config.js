@@ -123,7 +123,7 @@ const config = {
           // 💡 블로그 링크를 외부 URL로 리다이렉트되도록 수정합니다.
           {
             href: 'https://naaamgi.github.io/', // 👈 여기에 실제 블로그 URL을 입력하세요!
-            label: 'Go to Blog',
+            label: 'blog',
             position: 'left',
           },
         ],
@@ -138,50 +138,23 @@ const config = {
         facetFilters: [], 
       },
       footer: {
-        style: 'dark',
+        style: 'light',
         links: [
           {
-            title: 'Docs',
+            title: 'Links',
             items: [
               {
-                label: 'Tutorial',
-                to: '/',
-              },
-            ],
-          },
-          {
-            title: 'Community',
-            items: [
-              {
-                label: 'Stack Overflow',
-                href: 'https://stackoverflow.com/questions/tagged/docusaurus',
+                label: 'blog',
+                href: 'https://naaamgi.github.io/',
               },
               {
-                label: 'Discord',
-                href: 'https://discordapp.com/invite/docusaurus',
-              },
-              {
-                label: 'X',
-                href: 'https://x.com/docusaurus',
-              },
-            ],
-          },
-          {
-            title: 'More',
-            items: [
-              // 💡 블로그 링크 제거
-              // {
-              //   label: 'Blog',
-              //   to: '/blog',
-              // },
-              {
-                label: 'GitHub',
-                href: 'https://github.com/facebook/docusaurus',
+                label: 'github',
+                href: 'https://github.com/naaamgi/my-docusaurus-page',
               },
             ],
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} My Project, Inc. Built with Docusaurus.`,
+        copyright: `Copyright © ${new Date().getFullYear()} 남키 노트. Built with Docusaurus.`,
       },
       prism: {
         theme: prismThemes.github,

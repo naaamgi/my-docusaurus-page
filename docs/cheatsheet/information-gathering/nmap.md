@@ -1,250 +1,128 @@
 ---
 sidebar_position: 1
+title: Nmap & Service Scanning
 ---
 
-# Nmap
+# Nmap & Service Scanning
 
-## 기본 스캔
+## Overview
 
+**Nmap (Network Mapper)**: 호스트 탐지, 포트 스캔, 서비스 식별, 운영체제 탐지 등을 수행하는 핵심 정보 수집 도구
+- **목적**: 열린 포트(공격 진입점)를 식별하고, 실행 중인 서비스 종류와 버전을 파악하여 취약점 공격(Exploit)을 위한 사전 정보 수집
+
+---
+
+## 1. Host Discovery
+
+방화벽 우회 및 살아있는(Live) 호스트 식별을 위한 Ping 스캔
 ```bash
-# 빠른 포트 스캔 (모든 포트)
-sudo nmap -p- <RHOST> --min-rate 10000 -vvv
+# 기본 Ping 스캔 (ICMP) 및 ARP 스캔(로컬망)
+nmap -sn 192.168.1.0/24
+nmap -PR 192.168.1.0/24
 
-# 서비스 및 버전 탐지
-sudo nmap -sC -sV -p- <RHOST>
+# Host 탐지 방화벽 우회 (Ping 생략) - 실무 권장
+nmap -Pn 192.168.1.10
 
-# UDP 스캔
-sudo nmap -sV -sU <RHOST>
-
-# 취약점 스캔
-sudo nmap -sC -sV --script vuln <RHOST>
-
-# 상위 포트 스캔
-sudo nmap --top-ports 1000 <RHOST>
+# TCP SYN / ACK / UDP Ping
+nmap -PS 192.168.1.10
+nmap -PA 192.168.1.10
+nmap -PU 192.168.1.10
 ```
 
-## 스캔 타입
+---
 
+## 2. Port Scanning
+
+### 기본 스캔 유형
 ```bash
-# TCP SYN 스캔 (스텔스)
-sudo nmap -sS <RHOST>
+# TCP SYN 스캔 (Stealth Scan) - root 권한 필요, 빠르고 은밀함 (실무 권장)
+sudo nmap -sS <target>
 
-# TCP Connect 스캔
-nmap -sT <RHOST>
+# TCP Connect 스캔 - 완전한 Handshake (로그에 남음)
+nmap -sT <target>
 
-# UDP 스캔
-sudo nmap -sU <RHOST>
-
-# TCP ACK 스캔 (방화벽 탐지)
-sudo nmap -sA <RHOST>
-
-# TCP Window 스캔
-sudo nmap -sW <RHOST>
-
-# NULL 스캔
-sudo nmap -sN <RHOST>
-
-# FIN 스캔
-sudo nmap -sF <RHOST>
-
-# Xmas 스캔
-sudo nmap -sX <RHOST>
+# UDP 스캔 - 느림, DNS/SNMP 등 확인용
+sudo nmap -sU --top-ports 100 <target>
 ```
 
-## 호스트 탐지
-
+### 포트 지정
 ```bash
-# Ping 스캔
-sudo nmap -sn <RHOST>
-
-# ICMP 없이 스캔
-sudo nmap -Pn <RHOST>
-
-# ARP 스캔 (로컬 네트워크)
-sudo nmap -PR <RHOST>
-
-# TCP SYN Ping
-sudo nmap -PS <RHOST>
-
-# TCP ACK Ping
-sudo nmap -PA <RHOST>
-
-# UDP Ping
-sudo nmap -PU <RHOST>
+nmap -p 80,443 <target>         # 특정 포트 지정
+nmap -p 1-1000 <target>         # 범위 지정
+nmap -p- <target>               # 전체 포트(1-65535) 스캔
+nmap --top-ports 100 <target>   # 상위 N개 포트 스캔
 ```
 
-## 서비스 탐지
+---
 
+## 3. Service & OS Detection
+
+열린 포트에서 동작 중인 데몬의 배너 및 버전을 식별하여 공격 벡터 파악
 ```bash
-# 버전 탐지
-sudo nmap -sV <RHOST>
+# 서비스 및 버전 스캔
+nmap -sV <target>
 
-# 강도 높은 버전 탐지
-sudo nmap -sV --version-intensity 9 <RHOST>
+# 강도 높은 버전 탐지 (0~9)
+nmap -sV --version-intensity 9 <target>
 
-# OS 탐지
-sudo nmap -O <RHOST>
+# OS 운영체제 탐지
+sudo nmap -O <target>
 
-# 공격적인 스캔 (OS, 버전, 스크립트, traceroute)
-sudo nmap -A <RHOST>
+# 공격적인 통합 스캔 (OS, 버전, 기본 스크립트, Traceroute)
+sudo nmap -A <target>
 ```
 
-## NSE 스크립트
+---
 
+## 4. Nmap Scripting Engine (NSE)
+
+Nmap 내장 스크립트(`/usr/share/nmap/scripts/`)를 이용한 취약점 스캔 및 자동 정보 수집
 ```bash
-# 기본 스크립트 실행
-sudo nmap -sC <RHOST>
+# 기본(Default) 범주 스크립트 및 버전 스캔 통합 실행
+nmap -sC -sV <target>
 
-# 특정 스크립트 실행
-sudo nmap --script <SCRIPT_NAME> <RHOST>
+# 특정 카테고리 또는 스크립트 지정
+nmap --script vuln <target>
+nmap --script "http-*" <target>
+nmap --script smb-enum-shares,smb-os-discovery <target>
 
-# 여러 스크립트 실행
-sudo nmap --script "http-*" <RHOST>
-
-# 취약점 스크립트
-sudo nmap --script vuln <RHOST>
-
-# Kerberos 사용자 열거
-sudo nmap -p 88 --script krb5-enum-users --script-args krb5-enum-users.realm='<DOMAIN>' <RHOST>
-
-# SMB 스크립트
-sudo nmap --script smb-enum-shares,smb-enum-users <RHOST>
-
-# SSH 스크립트 찾기
-ls -lh /usr/share/nmap/scripts/*ssh*
-
-# SMB 스크립트 찾기
-locate -r '\.nse$' | xargs grep categories | grep 'default\|version\|safe' | grep smb
+# 로컬 환경 내 스크립트 검색 방법
+ls -lh /usr/share/nmap/scripts/ | grep ssh
+nmap --script-help "smb*"
 ```
 
-## 포트 지정
+---
 
+## 5. Advanced Techniques
+
+### 방화벽 우회 (Firewall Evasion) 및 성능 최적화
 ```bash
-# 특정 포트
-sudo nmap -p 80 <RHOST>
+# 패킷 단편화 및 MTU 설정
+sudo nmap -f <target>
+sudo nmap --mtu 24 <target>
 
-# 여러 포트
-sudo nmap -p 80,443,8080 <RHOST>
+# Decoy (미끼) IP 스푸핑 
+sudo nmap -D RND:10 <target>
+sudo nmap -D 192.168.1.5,192.168.1.6,ME <target>
 
-# 포트 범위
-sudo nmap -p 1-1000 <RHOST>
-
-# 모든 포트
-sudo nmap -p- <RHOST>
-
-# 상위 N개 포트
-sudo nmap --top-ports 100 <RHOST>
+# 패킷 전송 속도 최적화 (T4 권장, 최소 패킷 속도 보장)
+nmap -T4 --min-rate 1000 <target>
 ```
 
-## 출력 형식
-
+### 실전 빠른 스캔 워크플로우
 ```bash
-# 일반 출력
-sudo nmap <RHOST> -oN output.txt
+# 1. 대상 전체 포트 빠른 식별 (포트만 찾기)
+sudo nmap -p- --min-rate 10000 -Pn -n -T4 <target> -oG initial_ports.txt
 
-# XML 출력
-sudo nmap <RHOST> -oX output.xml
-
-# Grepable 출력
-sudo nmap <RHOST> -oG output.txt
-
-# 모든 형식 출력
-sudo nmap <RHOST> -oA output
+# 2. 식별된 포트 대상으로 정밀 스캔 (버전/스크립트)
+sudo nmap -p 22,80,443 -sC -sV -Pn <target> -oA detailed_scan
 ```
 
-## 타이밍 및 성능
-
+### 결과 저장 (Output Formats)
 ```bash
-# 타이밍 템플릿 (0-5, 빠를수록 큰 숫자)
-sudo nmap -T4 <RHOST>
+# Normal(텍스트), XML, Grepable 형식 모두 저장
+nmap -p- <target> -oA scan_results
 
-# 최소 전송 속도
-sudo nmap --min-rate 10000 <RHOST>
-
-# 최대 전송 속도
-sudo nmap --max-rate 50000 <RHOST>
-
-# 병렬 호스트 수
-sudo nmap --min-hostgroup 256 <RHOST>
+# Grepable 파일 파싱 예시 (열린 포트만 추출)
+cat scan_results.gnmap | grep "open" | cut -d " " -f 2
 ```
-
-## 방화벽 우회
-
-```bash
-# 패킷 단편화
-sudo nmap -f <RHOST>
-
-# MTU 설정
-sudo nmap --mtu 24 <RHOST>
-
-# Decoy 스캔
-sudo nmap -D RND:10 <RHOST>
-sudo nmap -D decoy1,decoy2,ME <RHOST>
-
-# 소스 포트 지정
-sudo nmap --source-port 53 <RHOST>
-
-# Data Length
-sudo nmap --data-length 25 <RHOST>
-
-# MAC 주소 스푸핑
-sudo nmap --spoof-mac 0 <RHOST>
-```
-
-## IPv6 스캔
-
-```bash
-sudo nmap -6 <IPv6_ADDRESS>
-```
-
-## 서브넷 스캔
-
-```bash
-# CIDR 표기
-sudo nmap 192.168.1.0/24
-
-# 범위 지정
-sudo nmap 192.168.1.1-254
-
-# 파일에서 타겟 읽기
-sudo nmap -iL targets.txt
-```
-
-## Verbose 출력
-
-```bash
-# 상세 출력
-sudo nmap -v <RHOST>
-
-# 매우 상세한 출력
-sudo nmap -vv <RHOST>
-
-# 극도로 상세한 출력
-sudo nmap -vvv <RHOST>
-```
-
-## 유용한 조합
-
-```bash
-# 빠른 전체 포트 스캔 후 서비스 탐지
-sudo nmap -p- --min-rate 10000 <RHOST>
-sudo nmap -sC -sV -p [발견된 포트] <RHOST>
-
-# 내부 네트워크 빠른 스캔
-sudo nmap -sn 192.168.1.0/24
-
-# 스텔스 SYN 스캔 + 서비스 버전
-sudo nmap -sS -sV -p- <RHOST>
-
-# 공격적인 전체 스캔
-sudo nmap -A -T4 -p- <RHOST>
-```
-
-## 참고
-
-- -sS: root 권한 필요 (SYN 스캔)
-- -sT: root 권한 불필요 (Connect 스캔)
-- -Pn: 방화벽이 ping을 차단할 때 유용
-- --min-rate: 빠른 스캔에 유용
-- -A: 공격적 스캔 (시간 오래 걸림)
-- NSE 스크립트: /usr/share/nmap/scripts/

@@ -1,148 +1,89 @@
 ---
 sidebar_position: 9
+title: Wfuzz
 ---
 
-# Wfuzz
+# Wfuzz (웹 애플리케이션 퍼저)
 
-> https://github.com/xmendez/wfuzz
+## Overview
 
-웹 애플리케이션 퍼저 및 브루트포스 도구입니다.
+**Wfuzz**: Python 기반의 다목적 웹 퍼징 도구. 디렉토리 발견, 파라미터 인젝션, 폼(Form) 브루트포스 등 웹 애플리케이션 취약점 진단 전반에 활용 가능.
+- **특징**: 다양한 페이로드 타입(파일, 리스트, 범위 등) 조합 지원 및 강력한 응답 필터링 기능
 
-## 기본 옵션
+---
 
+## 1. Reconnaissance (기본 퍼징)
+
+### 디렉토리 및 파일 스캔
+지정된 위치(`FUZZ`)에 워드리스트를 치환하여 요청 전송
 ```bash
--w        # 워드리스트
--u        # 타겟 URL
--c        # 컬러 출력
--f        # 결과를 파일로 저장
---hc      # 응답 코드 숨기기
---hw      # 단어 수 숨기기
---hh      # 헤더 크기 숨기기
---sc      # 표시할 응답 코드만
---ss      # 특정 문자열 포함된 것만 표시
--t        # 스레드 수
--z        # Payload 타입
--d        # POST 데이터
--X        # HTTP 메소드
--H        # 헤더
+# 기본 스캔 (403, 404 상태 코드 숨기기)
+wfuzz -c -z file,/usr/share/wordlists/dirb/common.txt --hc 403,404 http://<target>/FUZZ
+
+# 파일 확장자 탐색
+wfuzz -c -z file,wordlist.txt --hc 404 http://<target>/FUZZ.php
 ```
 
-## 기본 디렉토리/파일 퍼징
-
+### 서브도메인 및 VHost 열거
+Host 헤더에 페이로드를 주입하여 가상 호스트 식별
 ```bash
-# 기본 스캔
-wfuzz -w /usr/share/wfuzz/wordlist/general/big.txt -u http://<RHOST>/FUZZ/<FILE>.php --hc '403,404'
+# 단어 수(hw)나 상태 코드(hc)를 기준으로 False Positive 필터링
+wfuzz -c -z file,subdomains.txt -H "Host: FUZZ.<target_domain>" --hc 400,403,404 http://<target>/
 
-# Git 디렉토리 스캔
-wfuzz -w /usr/share/wordlists/seclists/Discovery/Web-Content/raft-medium-files-lowercase.txt -u http://<RHOST>/FUZZ --hc 403,404
+# 기본 페이지의 특정 단어 수(--hw)를 확인 후 제외하여 실제 존재하는 VHost만 필터링
+wfuzz -c -z file,subdomains.txt -H "Host: FUZZ.<target_domain>" --hw <default_word_count> http://<target>/
 ```
 
-## 파일 출력
+---
 
+## 2. Exploitation (정밀 타겟팅)
+
+### 다중 Payload (다중 위치 퍼징)
+여러 개의 `FUZZ` 키워드(FUZZ, FUZ2Z, FUZ3Z 등)에 각각 다른 페이로드를 주입
 ```bash
-wfuzz -w /PATH/TO/WORDLIST -c -f output.txt -u http://<RHOST> --hc 403,404
+# 디렉토리(FUZZ)와 확장자(FUZ2Z) 동시 퍼징
+wfuzz -c -z file,wordlist.txt -z list,txt-php-html --hc 404 http://<target>/FUZZ.FUZ2Z
 ```
 
-## 커스텀 스캔
-
+### 인증(Login) 폼 브루트포스
+POST 요청 데이터를 제어하여 계정 정보 대입 공격 수행
 ```bash
-# 200 응답만 표시, 20 스레드
-wfuzz -w /PATH/TO/WORDLIST -u http://<RHOST>/dev/304c0c90fbc6520610abbf378e2339d1/db/file_FUZZ.txt --sc 200 -t 20
+# 응답 본문에 "Invalid login" 문자열이 없는 경우(--ss)를 성공으로 간주
+wfuzz -c -X POST -z file,passwords.txt -d "username=admin&password=FUZZ" --ss "Success" http://<target>/login.php
 ```
 
-## 다중 Parameter Fuzzing
-
+### 숫자 범위(Range) 퍼징
+순차적인 ID값이나 시간, PID 등을 추측할 때 유용
 ```bash
-# 파일명과 확장자 동시 퍼징
-wfuzz -w /usr/share/wordlists/seclists/Discovery/Web-Content/big.txt -u http://<RHOST>:/<directory>/FUZZ.FUZ2Z -z list,txt-php --hc 403,404 -c
+# 0000~9999 숫자 대입 (백업 파일 등 탐색)
+wfuzz -c -z range,1000-9999 --hc 404 http://<target>/backup_FUZZ.zip
 ```
 
-## VHost / Subdomain Discovery
+---
 
+## 3. Advanced Techniques
+
+### 강력한 필터링 옵션 (Show/Hide)
+응답 결과에서 유의미한 데이터만 골라내기 위한 필터 옵션
 ```bash
-# Host 헤더로 VHost 발견
-wfuzz --hh 0 -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -H 'Host: FUZZ.<RHOST>' -u http://<RHOST>/
+# 응답 숨기기 (Hide)
+--hc 404,403      # 특정 상태 코드 숨기기
+--hl 50           # 응답 라인 수가 50인 결과 숨기기
+--hw 100          # 응답 단어 수가 100인 결과 숨기기
+--hh 1024         # 응답 크기(문자 수)가 1024인 결과 숨기기
+--hs "error"      # 본문에 "error" 정규식이 포함된 결과 숨기기
 
-# Subdomain 브루트포스
-wfuzz -w /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-110000.txt -H "Host: FUZZ.<RHOST>" --hc 200 --hw 356 -t 100 <RHOST>
-
-# DNS 서브도메인 스캔
-wfuzz -c -w /usr/share/wordlists/secLists/Discovery/DNS/subdomains-top1million-110000.txt --hc 400,404,403 -H "Host: FUZZ.<RHOST>" -u http://<RHOST> -t 100
-
-# 특정 단어 수 제외
-wfuzz -c -w /usr/share/wordlists/secLists/Discovery/DNS/subdomains-top1million-110000.txt --hc 400,403,404 -H "Host: FUZZ.<RHOST>" -u http://<RHOST> --hw <value> -t 100
-
-# Origin 헤더로 CORS 테스트
-wfuzz -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt -H "Origin: http://FUZZ.<RHOST>" --filter "r.headers.response~'Access-Control-Allow-Origin'" http://<RHOST>/
+# 응답 표시하기 (Show - Hide와 반대 개념)
+--sc 200,301      # 지정한 상태 코드만 표시
+--ss "success"    # 본문에 "success"가 포함된 결과만 표시
 ```
 
-## Login 브루트포스
-
+### 인코더 활용
+Wfuzz 내장 인코더를 통해 주입되는 페이로드를 자동으로 인코딩하여 전송
 ```bash
-# Email 브루트포스
-wfuzz -X POST -u "http://<RHOST>:<RPORT>/login.php" -d "email=FUZZ&password=<PASSWORD>" -w /PATH/TO/WORDLIST/<WORDLIST> --hc 200 -c
+# 사용 가능한 인코더 목록 확인
+wfuzz -e encoders
 
-# Username 브루트포스 (특정 문자열 매칭)
-wfuzz -X POST -u "http://<RHOST>:<RPORT>/login.php" -d "username=FUZZ&password=<PASSWORD>" -w /PATH/TO/WORDLIST/<WORDLIST> --ss "Invalid login"
+# URL 인코딩(urlencode) 적용
+wfuzz -c -z file,sqli.txt,urlencode http://<target>/search?q=FUZZ
 ```
-
-## SQL Injection Fuzzing
-
-```bash
-wfuzz -c -z file,/usr/share/wordlists/seclists/Fuzzing/SQLi/Generic-SQLi.txt -d 'db=FUZZ' --hl 16 http://<RHOST>/select
-```
-
-## 숫자 범위 퍼징
-
-```bash
-# 4자리 숫자 (백업 파일)
-wfuzz -w /usr/share/wordlists/seclists/Fuzzing/4-digits-0000-9999.txt --hw 31 http://10.13.37.11/backups/backup_2021052315FUZZ.zip
-
-# PID Enumeration
-wfuzz -u 'http://backdoor.htb/wp-content/plugins/ebook-download/filedownload.php?ebookdownloadurl=/proc/FUZZ/cmdline' -z range,900-1000
-```
-
-## Payload 타입
-
-```bash
-# 리스트
--z list,value1-value2-value3
-
-# 파일
--z file,/path/to/wordlist.txt
-
-# 범위
--z range,1-100
-
-# 조합
--z list,txt-php -z list,admin-test
-```
-
-## 필터링 옵션
-
-```bash
-# 응답 코드로 필터링
---hc 403,404          # 숨기기
---sc 200,301          # 표시만
-
-# 단어 수로 필터링
---hw 100              # 100 단어 숨기기
-
-# 라인 수로 필터링
---hl 50               # 50 라인 숨기기
-
-# 문자 수로 필터링
---hh 1024             # 1024 글자 숨기기
-
-# 정규식으로 필터링
---ss "success"        # "success" 포함된 것만
---hs "error"          # "error" 포함된 것 숨기기
-```
-
-## 참고
-
-- FUZZ는 기본 키워드 (FUZ2Z, FUZ3Z 등으로 다중 퍼징)
-- `--hc` vs `--sc`: 숨기기 vs 표시만
-- `-t` 스레드 수 조절로 속도 향상
-- `--ss`/`--hs`로 응답 내용 기반 필터링
-- ffuf보다 느리지만 더 많은 기능 제공

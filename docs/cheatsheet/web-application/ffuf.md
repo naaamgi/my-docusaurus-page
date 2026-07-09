@@ -1,268 +1,101 @@
 ---
 sidebar_position: 1
+title: FFUF (Fuzz Faster U Fool)
 ---
 
-# ffuf
+# FFUF (웹 디렉토리/파라미터 퍼징)
 
-> https://github.com/ffuf/ffuf
+## Overview
 
-빠르고 강력한 웹 퍼저(Fast web fuzzer)입니다.
+**FFUF (Fuzz Faster U Fool)**: Go 언어로 작성된 매우 빠르고 확장성이 뛰어난 웹 퍼징(Fuzzing) 도구. 디렉토리 버스팅, 가상 호스트(VHost) 식별, 파라미터 및 API 엔드포인트 탐색 등에 널리 사용됨.
 
-## 설치
+---
 
+## 1. Reconnaissance (기본 스캐닝)
+
+### 디렉토리 및 파일 탐색
+가장 기본적인 워드리스트를 사용한 웹 경로 탐색
 ```bash
-# Kali Linux
-sudo apt install ffuf
+# 기본 디렉토리 스캔
+ffuf -u http://<target>/FUZZ -w /usr/share/wordlists/dirb/common.txt
 
-# Go
-go install github.com/ffuf/ffuf@latest
+# 여러 확장자 지정
+ffuf -u http://<target>/FUZZ -w wordlist.txt -e .php,.html,.txt
+
+# 특정 상태 코드(200, 301, 302)만 출력
+ffuf -u http://<target>/FUZZ -w wordlist.txt -mc 200,301,302
 ```
 
-## 기본 옵션
-
+### 서브도메인 및 가상 호스트(VHost) 열거
+DNS 조회가 아닌 Host 헤더 조작을 통한 내부 가상 호스트 탐지
 ```bash
--w        # 워드리스트 (-w wordlist.txt 또는 -w wordlist.txt:KEYWORD)
--u        # 타겟 URL (FUZZ 키워드 사용)
--H        # 헤더
--X        # HTTP 메서드 (GET, POST, PUT 등)
--d        # POST 데이터
--b        # 쿠키
--mc       # 매치할 상태 코드 (Match Codes)
--fc       # 필터링할 상태 코드 (Filter Codes)
--fs       # 필터링할 응답 크기 (Filter Size)
--fw       # 필터링할 단어 수 (Filter Words)
--fl       # 필터링할 라인 수 (Filter Lines)
--fr       # 필터링할 정규식 (Filter Regex)
--c        # 컬러 출력
--ac       # 자동 캘리브레이션 (Auto Calibration)
--t        # 스레드 수 (기본 40)
--p        # 딜레이 시간 (초)
--timeout  # 타임아웃 (초)
--e        # 파일 확장자
--o        # 결과 출력 파일
--of       # 출력 형식 (json, html, csv, all)
--s        # 조용한 모드 (배너 숨기기)
--recursion      # 재귀 탐색
--recursion-depth # 재귀 깊이
--mode     # Fuzzing 모드 (clusterbomb, pitchfork)
+# Host 헤더를 FUZZ로 지정하여 VHost 열거 (-ac: 자동 캘리브레이션으로 기본 페이지 크기 필터링)
+ffuf -u http://<target> -H "Host: FUZZ.<target_domain>" -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -ac
+
+# 응답 크기(Filter Size)를 수동으로 지정하여 오탐 제거
+ffuf -u http://<target> -H "Host: FUZZ.<target_domain>" -w wordlist.txt -fs 185
 ```
 
-## 기본 디렉토리/파일 Fuzzing
+---
 
+## 2. Exploitation (고급 퍼징 및 필터링)
+
+### API 및 파라미터 퍼징
+REST API 엔드포인트나 숨겨진 GET/POST 파라미터 식별
 ```bash
-# 응답 크기 필터링
-ffuf -w /usr/share/wordlists/dirb/common.txt -u http://<RHOST>/FUZZ --fs <NUMBER> -mc all
+# API 엔드포인트 퍼징 (응답 400, 404, 412 제외)
+ffuf -u https://<target>/api/v2/FUZZ -w api_endpoints.txt -fc 400,404,412
 
-# 단어 수 필터링
-ffuf -w /usr/share/wordlists/dirb/common.txt -u http://<RHOST>/FUZZ --fw <NUMBER> -mc all
+# GET 파라미터 식별
+ffuf -u "http://<target>/api/user?FUZZ=1" -w params.txt -ac
 
-# 특정 상태 코드만 표시
-ffuf -w /usr/share/wordlists/dirb/common.txt -u http://<RHOST>/FUZZ -mc 200,204,301,302,307,401 -o results.txt
-
-# 404, 403 제외
-ffuf -w /usr/share/wordlists/dirb/common.txt -u http://<RHOST>/FUZZ -fc 404,403
+# POST 데이터 퍼징
+ffuf -u http://<target>/login -X POST -d "username=FUZZ&password=test" -H "Content-Type: application/x-www-form-urlencoded" -w users.txt
 ```
 
-## VHost / Subdomain Discovery
-
+### 여러 위치 동시 퍼징 (Clusterbomb)
+두 개 이상의 워드리스트를 조합하여 모든 경우의 수(Permutation) 테스트
 ```bash
-# 자동 캘리브레이션
-ffuf -c -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt -H "Host: FUZZ.<RHOST>" -u http://<RHOST>/ -ac
-
-# 응답 크기로 필터링
-ffuf -c -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt -H "Host: FUZZ.<RHOST>" -u http://<RHOST>/ -fs 185
-
-# 작은 워드리스트
-ffuf -w /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt -H "Host: FUZZ.<RHOST>" -u http://<RHOST> -ac
-ffuf -w /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt -H "Host: FUZZ.<RHOST>" -u http://<RHOST> -fs 1495
+# 사용자명(W1)과 비밀번호(W2) 조합 브루트포스
+ffuf -u http://<target>/login -X POST -d "user=W1&pass=W2" -w users.txt:W1 -w passwords.txt:W2 -mode clusterbomb
 ```
 
-## 파일 확장자 Fuzzing
-
+### Burp Suite Request 파일 연동
+복잡한 헤더와 쿠키가 포함된 HTTP 요청 파일을 그대로 가져와서 활용
 ```bash
-# 단일 확장자
-ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/directory-list-2.3-small.txt -u http://<RHOST>/cd/ext/logs/FUZZ -e .log
-
-# 여러 확장자
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -e .php,.html,.js,.txt
-
-# 확장자 없이도 테스트
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -e .php,.html,""
-
-# 대규모 확장자 탐색
-ffuf -w /opt/seclists/Discovery/Web-Content/directory-list-1.0.txt -u http://<RHOST>/FUZZ -t 30 -c -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:78.0) Gecko/20100101 Firefox/78.0' -mc 200,204,301,302,307,401,403,500 -ic -e .7z,.action,.ashx,.asp,.aspx,.backup,.bak,.bz,.c,.cgi,.conf,.config,.dat,.db,.dhtml,.do,.doc,.docm,.docx,.dot,.dotm,.go,.htm,.html,.ini,.jar,.java,.js,.js.map,.json,.jsp,.jsp.source,.jspx,.jsx,.log,.old,.pdb,.pdf,.phtm,.phtml,.pl,.py,.pyc,.pyz,.rar,.rhtml,.shtm,.shtml,.sql,.sqlite3,.svc,.tar,.tar.bz2,.tar.gz,.tsx,.txt,.wsdl,.xhtm,.xhtml,.xls,.xlsm,.xlst,.xlsx,.xltm,.xml,.zip
+# req.txt 파일 내의 FUZZ 문자열을 워드리스트로 치환하여 전송
+ffuf -request req.txt -request-proto http -w wordlist.txt
 ```
 
-## 재귀 탐색 (Recursion)
+---
 
+## 3. Advanced Techniques
+
+### 다양한 필터링 옵션 (Match & Filter)
+정상 응답과 비정상 응답(False Positives)을 구분하는 핵심 옵션
 ```bash
-# 재귀 디렉토리 스캔
-ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/directory-list-2.3-small.txt -u http://<RHOST>/cd/basic/FUZZ -recursion
-
-# 재귀 깊이 설정
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -recursion -recursion-depth 2
+-mc 200,204,301       # [Match Codes] 지정한 상태 코드만 표시 (기본: 200,204,301,302,307,401,403)
+-fc 403,404           # [Filter Codes] 지정한 상태 코드 제외
+-fs 100-200           # [Filter Size] 응답 크기가 100~200 바이트인 결과 제외
+-fw 42                # [Filter Words] 단어 개수가 42개인 결과 제외
+-fl 10                # [Filter Lines] 라인 수가 10개인 결과 제외
+-fr "error"           # [Filter Regex] 응답 본문에 "error" 정규식이 포함된 결과 제외
 ```
 
-## Request 파일 사용
-
+### 성능 및 안정성 최적화
 ```bash
-# Burp Suite 등에서 저장한 요청 파일 사용
-ffuf -request <FILE> -w /usr/share/wordlists/dirb/common.txt
+# 스레드 수 증가 (기본 40 -> 100)
+ffuf -u http://<target>/FUZZ -w wordlist.txt -t 100
 
-# Request 파일에서 여러 위치 fuzzing
-ffuf -request req.txt -w wordlist.txt -mode clusterbomb
+# Rate Limiting(속도 제한) 서버 대상 (스레드 5, 요청 당 0.5초 대기)
+ffuf -u http://<target>/FUZZ -w wordlist.txt -t 5 -p 0.5
+
+# 재귀(Recursive) 탐색 (발견된 디렉토리 하위로 계속 스캔)
+ffuf -u http://<target>/FUZZ -w wordlist.txt -recursion -recursion-depth 2
 ```
 
-## API Fuzzing
-
+### 주요 출력 포맷
 ```bash
-# API 엔드포인트 fuzzing
-ffuf -u https://<RHOST>/api/v2/FUZZ -w api_seen_in_wild.txt -c -ac -t 250 -fc 400,404,412
-
-# API 파라미터 fuzzing
-ffuf -u https://<RHOST>/api/user?FUZZ=value -w params.txt -ac
+# 결과를 JSON 파일로 저장 (-of: json, html, csv, all)
+ffuf -u http://<target>/FUZZ -w wordlist.txt -o results.json -of json
 ```
-
-## LFI 탐지
-
-```bash
-ffuf -w /usr/share/wordlists/seclists/Fuzzing/LFI/LFI-Jhaddix.txt -u http://<RHOST>/admin../admin_staging/index.php?page=FUZZ -fs 15349
-```
-
-## 쿠키/세션 사용
-
-```bash
-# PHP 세션 ID와 함께
-ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-small.txt -u "http://<RHOST>/admin/FUZZ.php" -b "PHPSESSID=a0mjo6ukbkq271nb2rkb1joamp" -fw 2644
-
-# 여러 쿠키
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -b "session=value; token=value"
-```
-
-## POST 요청 Fuzzing
-
-```bash
-# POST 데이터 fuzzing
-ffuf -w wordlist.txt -u http://<RHOST>/login -X POST -d "username=FUZZ&password=test" -H "Content-Type: application/x-www-form-urlencoded"
-
-# JSON POST
-ffuf -w wordlist.txt -u http://<RHOST>/api -X POST -d '{"param":"FUZZ"}' -H "Content-Type: application/json"
-```
-
-## 여러 위치 동시 Fuzzing
-
-```bash
-# 2개 위치 fuzzing (사용자명과 비밀번호)
-ffuf -w users.txt:USERS -w passwords.txt:PASS -u http://<RHOST>/login -X POST -d "username=USERS&password=PASS"
-
-# Clusterbomb 모드
-ffuf -w wordlist1.txt:W1 -w wordlist2.txt:W2 -u http://<RHOST>/W1/W2 -mode clusterbomb
-```
-
-## Rate Limiting
-
-```bash
-# 5개 스레드, 0.1초 딜레이
-ffuf -w /usr/share/wordlists/seclists/Discovery/Web-Content/directory-list-2.3-small.txt -t 5 -p 0.1 -u http://<RHOST>/cd/rate/FUZZ -mc 200,429
-
-# 최소 지연 시간 설정
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -p 0.5 -t 10
-```
-
-## 숫자 범위 Fuzzing
-
-```bash
-# 백업 파일 찾기 (4자리 숫자)
-ffuf -c -w /usr/share/wordlists/seclists/Fuzzing/4-digits-0000-9999.txt -u http://<RHOST>/backups/backup_2020070416FUZZ.zip
-```
-
-## 필터 옵션
-
-```bash
-# 파일 크기 필터
--fs 1234          # 크기가 1234인 응답 제외
--fs 100-200       # 100-200 범위 제외
-
-# Word 개수 필터
--fw 42            # word 개수가 42인 응답 제외
-
-# Line 개수 필터
--fl 10            # line 개수가 10인 응답 제외
-
-# 상태 코드 필터
--mc 200,301       # 200, 301만 표시
--fc 404,403       # 404, 403 제외
-
-# Regex 필터
--fr "error"       # "error" 포함된 응답 제외
--mr "success"     # "success" 포함된 응답만 표시
-```
-
-## 출력 형식
-
-```bash
-# JSON 출력
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -o output.json -of json
-
-# HTML 출력
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -o output.html -of html
-
-# CSV 출력
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -o output.csv -of csv
-
-# 모든 결과 저장 (매치 여부 관계없이)
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -o output.txt -of all
-```
-
-## 성능 최적화
-
-```bash
-# 쓰레드 수 증가
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -t 100
-
-# 타임아웃 설정
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -timeout 10
-
-# 자동 조정
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -ac
-
-# 조용한 모드 (배너 숨기기)
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -s
-
-# 컬러 출력
-ffuf -w wordlist.txt -u http://<RHOST>/FUZZ -c
-```
-
-## 유용한 Wordlists
-
-```bash
-# 디렉토리
-/usr/share/wordlists/dirb/common.txt
-/usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt
-/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt
-
-# 파일
-/usr/share/seclists/Discovery/Web-Content/raft-medium-files.txt
-
-# 서브도메인
-/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt
-/usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt
-
-# LFI
-/usr/share/seclists/Fuzzing/LFI/LFI-Jhaddix.txt
-
-# API
-/usr/share/seclists/Discovery/Web-Content/api/api-endpoints.txt
-```
-
-## 참고
-
-- **FUZZ**는 워드리스트 항목으로 대체될 키워드
-- 여러 FUZZ 위치 사용 시 `-w wordlist.txt:KEYWORD` 형식
-- `-ac` 자동 캘리브레이션은 매우 유용 (false positive 제거)
-- `-mc all`은 모든 상태 코드 표시
-- VHost 발견 시 Host 헤더 활용
-- 대량 스캔 시 `-t` 스레드 수 조절
-- 속도 제한이 있는 사이트는 `-p` 딜레이 사용
-- `-recursion`은 발견된 디렉토리 자동 탐색
-- gobuster보다 빠르고 wfuzz보다 사용하기 쉬움

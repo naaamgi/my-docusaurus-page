@@ -1,13 +1,12 @@
 ---
 sidebar_position: 9
-title: 디버거/Frida 탐지 우회 (Anti-Debug / Anti-Frida Bypass)
+title: 디버거/Frida 탐지 우회
 description: 모바일 진단 - Android/iOS 디버거 및 Frida 탐지 우회 (ptrace / sysctl / TracerPid / 27042 port / gum-js-loop)
 keywords: [Anti-Debug, Anti-Frida, ptrace, sysctl, TracerPid, PT_DENY_ATTACH, Frida Detection, gum-js-loop, MASVS-RESILIENCE, Native Hook]
 draft: false
 ---
 
-# 디버거/Frida 탐지 우회 (Anti-Debug / Anti-Frida Bypass)
-
+# 디버거/Frida 탐지 우회
 > 앱이 디버거 (`ptrace`, `lldb`, `gdb`) 또는 Frida 의 동작 흔적을 탐지해 후킹 자체를 차단할 때 우회.
 > 우회 못 하면 SSL Pinning / Root 탐지 우회 스크립트조차 주입 안 됨 — **점검의 가장 앞단에서 풀어야 할 문제**.
 
@@ -81,8 +80,7 @@ draft: false
    - 정상 동작                            : 탐지 미적용 또는 후킹 시점이 늦었음
 ```
 
-### Step 2. 탐지 위치 식별 (정적 분석)
-
+### Step 2. 탐지 위치 식별
 `static-analysis.md` 의 jadx / Hopper 검색 키워드:
 
 ```
@@ -329,7 +327,7 @@ frida -U -f com.target.app -l ios-antidebug.js --no-pause
 **언제 쓰는지**: 위 모든 케이스가 안 먹는 경우. Frida 자체를 패치해 흔적을 줄이거나, Stealth 모드로 빌드된 frida-server 사용.
 
 ```bash
-# fridare — frida-server / frida-gadget 의 시그니처 무작위화 (Android)
+# fridare — frida-server / frida-gadget 의 시그니처 무작위화
 # https://github.com/suifei/fridare
 
 # iOS 측은 frida-server 의 포트 변경 + 시그니처 패치 빌드 사용
@@ -338,8 +336,7 @@ frida -U -f com.target.app -l ios-antidebug.js --no-pause
 
 **언제 쓰는지**: 점검 대상이 상업용 RASP (Promon / Guardsquare / Build38) 적용 — 일반 Frida 시그니처 모두 탐지. 도구 자체 패치가 가장 효과적.
 
-### 케이스 6: 디버거 탐지 미적용 (Negative case)
-
+### 케이스 6: 디버거 탐지 미적용
 **판정**: 앱이 Frida attach + 후킹 정상 동작 + 종료 / 차단 없음. 정적 분석에서 탐지 코드 부재. **결제 / 금융 / 의료 / 인증 앱은 미흡으로 보고** — 단, 일반 정보 제공 앱은 미적용이 정상.
 
 ---
@@ -353,111 +350,6 @@ frida -U -f com.target.app -l ios-antidebug.js --no-pause
 - [ ] **Frida 표준 시그니처 탐지만** — 포트 변경 / 시그니처 패치 / 다중 신호 부재
 - [ ] **클라이언트 단독 탐지** — 서버 사이드 무결성 검증 없음
 - [ ] 우회 후 다른 모든 점검 (SSL Pinning / Root) 진행 가능 → 다층 방어 부재
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-### PoC 1 — [Anti-Debug] iOS PT_DENY_ATTACH 우회 후 후속 후킹 가능
-
-1. `setup-ios.md` 의 탈옥 단말 환경 셋업 완료
-2. `frida -U -f com.target.app` 시도 → "Failed to attach: ptrace operation prevented"
-3. 정적 분석에서 `ptrace(31, 0, 0, 0)` 호출 확인
-4. 케이스 4 의 통합 Frida 스크립트 적용 → `ptrace` / `syscall(26)` / `sysctl` / `getppid` 후킹
-5. 앱 정상 spawn + 후속 후킹 (SSL Pinning 우회 / 탈옥 탐지 우회) 모두 동작
-
-**1차 — 우회 전:**
-
-```
-$ frida -U com.target.app
-Failed to attach: ptrace operation prevented by another instance
-```
-
-**2차 — 우회 적용 (spawn 모드):**
-
-```bash
-$ frida -U -f com.target.app -l ios-antidebug.js --no-pause
-[+] ptrace(PT_DENY_ATTACH) blocked
-[+] sysctl P_TRACED bit cleared
-[+] getppid spoofed: 1
-```
-
-**3차 — 후속 후킹 정상:**
-
-```bash
-# 같은 세션에서 SSL Pinning 우회 스크립트 추가 주입
-> %load ios-pinning-bypass.js
-[+] SecTrustEvaluateWithError bypassed
-```
-
-**확인 사항:**
-- 디버거 / Frida 탐지가 클라이언트 단일 함수 (ptrace) 기반 — Native 후킹 한 번에 우회 가능
-- Bypass-resistant 부재 (다중 신호 / 시그니처 패치된 RASP / 서버 사이드 무결성 검증 모두 없음)
-- 우회 후 모든 동적 점검 가능 → 결제 / 인증 흐름의 자격증명 / 토큰 노출
-- 권장: Native 다중 신호 + 무결성 검증 + 서버 사이드 App Attest / Play Integrity 결합
-
----
-
-## 영향도 분석
-
-- **기밀성 (Confidentiality)**: 🟡 — 자체 영향은 작음. 우회 후 다른 점검 (데이터 / 통신 / Pinning) 이 가능해지는 게 본질
-- **무결성 (Integrity)**: 🟡 — 우회 후 메모리 / 동작 변경 가능
-- **추가 위협**:
-  - 디버거 탐지 부재 → 분석가 / 악성 앱 / 자동화 봇의 진입 장벽 부재
-  - 다른 모든 RESILIENCE 항목 (Root / Pinning / 데이터 보호) 의 효과 약화
-  - RASP / 서버 사이드 무결성 검증 부재 → 자동화된 부정 거래 / 매크로
-
-**비즈니스 임팩트:**
-디버거 / Frida 탐지는 점검 / 분석 / 악성 도구의 진입 장벽. 미적용 또는 우회가 쉬우면 다른 RESILIENCE 방어가 모두 약화된다. **상업용 RASP (Runtime Application Self-Protection) 도입 + 서버 사이드 무결성 토큰 (Play Integrity / App Attest) 결합** 이 권장.
-
----
-
-## 대응방안
-
-### 개발자 관점
-
-1. **Native (C/C++) 다중 신호 결합** — Java / ObjC 단일 함수 후킹으로 무력화 안 되도록.
-
-2. **시스템 콜 직접 호출** — 함수 후킹 회피 (`syscall(SYS_ptrace, ...)` 직접).
-
-3. **서버 사이드 무결성 토큰** — 클라이언트 신호를 토큰화해 서버에 검증. 클라이언트가 거부 결정 X.
-
-4. **상업용 RASP 도입** — Promon SHIELD / Guardsquare DexGuard / Build38 등. 자체 구현보다 안정적.
-
-5. **다층 방어** — 디버그 탐지 + Root/탈옥 탐지 + Pinning + 무결성 검증 + 코드 난독화 결합. 어느 한 층이 뚫려도 다른 층에서 차단.
-
-### 안전 / 위험 코드 비교
-
-**위험 — Java 단일 검사 (Android):**
-
-```java
-if (Debug.isDebuggerConnected()) {
-    System.exit(0);   // ← 한 줄 후킹으로 무력화
-}
-```
-
-**위험 — 단일 ptrace (iOS):**
-
-```c
-ptrace(PT_DENY_ATTACH, 0, 0, 0);   // ← 한 줄 후킹으로 무력화
-```
-
-**안전 — Native 다중 + 서버 검증:**
-
-```c
-// 다중 신호 (Native)
-int signals = 0;
-signals += check_ptrace_traceme();
-signals += check_sysctl_traced();
-signals += check_tracer_pid();
-signals += check_frida_port();
-signals += check_dyld_images();
-signals += check_thread_names();
-
-// 결과를 서버로 토큰화 전송 (클라이언트 단독 결정 X)
-char *token = generate_integrity_token(signals);
-send_to_server(token);
-```
 
 ---
 

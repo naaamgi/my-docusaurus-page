@@ -1,13 +1,12 @@
 ---
 sidebar_position: 8
-title: 탈옥 탐지 우회 (Jailbreak Detection Bypass / iOS)
+title: 탈옥 탐지 우회
 description: 모바일 진단 - iOS 탈옥 탐지 우회 (Liberty Lite / A-Bypass / Shadow / Frida 후킹) + 흔한 탐지 항목 + 판정 기준
 keywords: [Jailbreak Detection, Bypass, Liberty Lite, A-Bypass, Shadow, Choicy, Frida, NSFileManager, dlopen, fork, MASVS-RESILIENCE, iOS]
 draft: false
 ---
 
-# 탈옥 탐지 우회 (Jailbreak Detection Bypass / iOS)
-
+# 탈옥 탐지 우회
 > 앱이 탈옥 단말에서 실행을 거부할 때 우회. 점검자 입장에선 **점검 환경의 일부** + 점검 결과로 "탐지 적용 여부 + 우회 가능성" 평가.
 > Android 의 루팅 탐지와 동일한 구조 — 단일 신호 의존 / 클라이언트만 검증은 미흡.
 
@@ -65,8 +64,7 @@ iOS 탈옥 탐지는 (1) 적용 여부, (2) 어떤 신호를 쓰는지, (3) 표�
    - 일부 기능만 차단                  → 부분 탐지
 ```
 
-### Step 2. 탐지 위치 식별 (정적 분석)
-
+### Step 2. 탐지 위치 식별
 `static-analysis.md` 의 class-dump / Hopper 검색 키워드:
 
 ```
@@ -80,8 +78,7 @@ iOS 탈옥 탐지는 (1) 적용 여부, (2) 어떤 신호를 쓰는지, (3) 표�
   - "DeviceCheck", "AppAttest"             ← 서버 사이드 검증 (강력)
 ```
 
-### Step 3. 우회 시도 (난이도 순)
-
+### Step 3. 우회 시도
 (1) Liberty Lite / A-Bypass / Shadow → (2) Choicy 로 트윅 비활성 → (3) Objection / Frida 표준 → (4) 자체 구현 후킹 → (5) Native 후킹 → (6) DeviceCheck / App Attest 결합 시 사실상 불가.
 
 ### Step 4. 우회 후 검증
@@ -93,8 +90,7 @@ iOS 탈옥 탐지는 (1) 적용 여부, (2) 어떤 신호를 쓰는지, (3) 표�
 
 ## 페이로드 / 우회 케이스
 
-### 케이스 1: Liberty Lite / A-Bypass / Shadow (Sileo 트윅, 가장 빠름)
-
+### 케이스 1: Liberty Lite / A-Bypass / Shadow
 **언제 쓰는지**: 점검 초기 / 일반 앱. 시스템 레벨에서 탈옥 흔적을 숨겨 앱 후킹 없이 우회.
 
 | 트윅 | 호환 iOS | 비고 |
@@ -115,8 +111,7 @@ iOS 탈옥 탐지는 (1) 적용 여부, (2) 어떤 신호를 쓰는지, (3) 표�
 
 **판정**: Shadow 적용 후 앱 정상 동작이면 표준 신호 (파일 존재 / canOpenURL) 만 사용 → 미흡 보고. 여전히 차단되면 케이스 2 ~ 4 로.
 
-### 케이스 2: Choicy 로 트윅 자체 무력화 (역방향)
-
+### 케이스 2: Choicy 로 트윅 자체 무력화
 **언제 쓰는지**: 일부 앱은 **트윅의 존재 자체** 를 검사 (`MobileSubstrate.dylib` 가 로드됐는지). Shadow / Liberty 가 오히려 탐지될 수 있음 — Choicy 로 점검 대상 앱에 트윅 미적용 → 그 후 Frida 만으로 진행.
 
 ```
@@ -136,8 +131,7 @@ objection -g com.target.app explore
 
 **판정**: 적용 후 앱 정상 동작이면 표준 패턴. 안 먹으면 케이스 4 (자체 구현 후킹).
 
-### 케이스 4: Frida 통합 스크립트 (자체 구현 + Native)
-
+### 케이스 4: Frida 통합 스크립트
 **언제 쓰는지**: Shadow + Objection 으로도 안 되는 케이스. 정적 분석에서 자체 구현 탐지 / Native 탐지 보임.
 
 ```javascript
@@ -259,8 +253,7 @@ frida -U -f com.target.app -l ios-jailbreak-bypass.js --no-pause
 
 **판정**: 콘솔에 `[+] ... blocked / hidden` 메시지 + 앱 정상 동작이면 우회 성공.
 
-### 케이스 5: DeviceCheck / App Attest (서버 사이드)
-
+### 케이스 5: DeviceCheck / App Attest
 **언제 쓰는지**: 앱이 Apple 의 DeviceCheck (iOS 11+) 또는 App Attest (iOS 14+) 로 단말 무결성을 서버에서 검증.
 
 **관찰만 — 우회 제한적:**
@@ -279,8 +272,7 @@ if (ObjC.available) {
 
 **판정**: App Attest 가 적용된 앱은 클라이언트 우회만으로 거래 불가 — MASVS-RESILIENCE 측면 우수. 보고서에 긍정 평가.
 
-### 케이스 6: 탈옥 탐지 미적용 (Negative case)
-
+### 케이스 6: 탈옥 탐지 미적용
 **판정**: 탈옥 단말에서 정상 동작 + 정적 분석에서 탐지 코드 부재 → 미적용. 결제 / 금융 / 의료 / 인증 앱은 미흡으로 보고.
 
 ---
@@ -300,127 +292,6 @@ if (ObjC.available) {
 - [ ] 정보 제공 앱 / 단순 유틸은 미적용이 정상
 - [ ] 일부 앱은 탈옥 단말에서 경고만 (실행 허용) — 미흡 아닐 수 있음
 - [ ] App Attest 적용 시 클라이언트 우회 불가 — 우수 평가
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-### PoC 1 — [Jailbreak Detection] Frida 단일 스크립트로 자체 구현 탐지 우회
-
-1. `setup-ios.md` 의 탈옥 단말 환경 셋업 완료
-2. 점검 대상 앱 (`com.target.app`) 실행 → 즉시 "탈옥된 기기에서 실행할 수 없습니다" 후 종료
-3. `static-analysis.md` 의 class-dump 로 `JailbreakChecker isJailbroken` 위치 확인
-4. 케이스 4 의 통합 Frida 스크립트 적용 → `fileExistsAtPath:` / `access` / `canOpenURL:` / `fork` 후킹
-5. 앱 정상 실행 + 차단 기능도 동작
-
-**1차 — 우회 전 (탐지 동작):**
-
-```
-앱 실행 → 스플래시 → "본 앱은 탈옥된 기기에서 사용할 수 없습니다" → 강제 종료
-```
-
-**2차 — Frida 스크립트 적용:**
-
-```bash
-$ frida -U -f com.target.app -l ios-jailbreak-bypass.js --no-pause
-[+] fileExistsAtPath blocked: /Applications/Cydia.app
-[+] fileExistsAtPath blocked: /Library/MobileSubstrate/MobileSubstrate.dylib
-[+] fileExistsAtPath blocked: /etc/apt
-[+] canOpenURL blocked: cydia://
-[+] access(2) blocked: /usr/sbin/sshd
-[+] fork() forced to -1
-```
-
-**3차 — 우회 후:**
-
-```
-앱 정상 실행 → 로그인 → 결제 / 인증 기능 정상 동작
-( 후속 점검은 ssl-pinning-bypass.md / data-storage-ios.md 등과 결합 )
-```
-
-**확인 사항:**
-- 클라이언트 단일 신호 기반 탐지 — 표준 Frida 스크립트 한 번에 우회 가능
-- Bypass-resistant 부재 (Native 다중 + 무결성 + DeviceCheck/App Attest 모두 없음)
-- 우회 후 결제 / 인증 기능 동작 → 탈옥 단말 + 우회 환경에서 자격증명 / 결제 정보 노출 가능
-- 권장: App Attest 도입 + Native 다중 신호 결합
-
----
-
-## 영향도 분석
-
-- **기밀성 (Confidentiality)**: 🟡 — 탈옥 탐지 우회 자체는 직접 영향 없음. 우회 환경에서 다른 점검 (Frida 후킹 / 데이터 추출) 가능해지는 게 본질
-- **무결성 (Integrity)**: 🟡 — 우회 후 메모리 변조 / 동작 변경 가능
-- **추가 위협**:
-  - 탈옥 탐지 미흡 + SSL Pinning 우회 + 평문 데이터 저장 결합 → 자격증명 / 결제 정보 탈취
-  - 악성 앱이 탈옥 단말에서 점검 대상 앱 데이터 (Keychain / Documents) 접근
-  - App Attest 부재 → 자동화된 부정 거래 / 봇 / 매크로 용이
-
-**비즈니스 임팩트:**
-탈옥 탐지는 단독 결함이 아니라 **악성 사용자 / 분석가 환경 차단** 의 방어 레이어. 결제 / 금융 / 인증 앱에서 탐지가 미흡하면 부정 거래 / 자동화 봇 / 자격증명 탈취 가능성이 크게 올라간다. **서버 사이드 App Attest + 클라이언트 다중 신호** 가 권장.
-
----
-
-## 대응방안
-
-### 개발자 관점
-
-1. **App Attest API (iOS 14+)** — 클라이언트 후킹으로 우회 불가능한 유일한 방법.
-
-   ```swift
-   let service = DCAppAttestService.shared
-   guard service.isSupported else { return }
-
-   service.generateKey { keyId, error in
-       guard let keyId = keyId else { return }
-       let challenge = serverGeneratedChallenge   // 서버에서 발급
-       let clientDataHash = SHA256.hash(data: challenge)
-
-       service.attestKey(keyId, clientDataHash: clientDataHash) { attestation, error in
-           // attestation 을 서버로 전송 → Apple 서버에서 검증
-       }
-   }
-   ```
-
-2. **DeviceCheck API (iOS 11+)** — App Attest 보다 약하지만 폭넓게 호환.
-
-3. **클라이언트 다중 신호 + Native 검사** — Java / ObjC 단일 함수 후킹으로 무력화 안 되도록.
-
-4. **앱 무결성 검증 (코드사인 / Mach-O 해시)** — 재패키징 차단.
-
-5. **차단은 서버에서** — 클라이언트가 "차단" 결정 X. 서버 API 가 `attestation_token` 을 검증하지 않으면 거래 거부.
-
-### 운영자 관점
-
-1. **App Attest 검증 로그 모니터링** — 비정상 비율 급증 = 우회 도구 보급 / 캠페인 가능성.
-2. **위험도 기반 인증** — 탈옥 신호 + 신규 디바이스 + 비정상 위치 결합 시 추가 인증.
-
-### 안전 / 위험 코드 비교
-
-**위험 — 단일 함수 검사:**
-
-```objc
-- (BOOL)isJailbroken {
-    return [[NSFileManager defaultManager] fileExistsAtPath:@"/Applications/Cydia.app"];
-    // ← 한 줄 후킹으로 우회
-}
-```
-
-**안전 — 다중 신호 + Native + 서버 검증:**
-
-```swift
-// 클라이언트: 다중 신호
-let signals: [Bool] = [
-    checkSuspiciousFiles(),     // Swift
-    checkURLSchemes(),          // Swift
-    checkSandboxIntegrity(),    // C - fork() 시도
-    checkDyldImages(),          // C - dyld_image_count
-    nativeJailbreakCheck()      // C - 다중 검사
-]
-
-// 서버 사이드: App Attest 토큰 검증 (필수)
-let attestToken = await getAppAttestToken()
-let response = try await api.verifyDevice(token: attestToken)
-```
 
 ---
 

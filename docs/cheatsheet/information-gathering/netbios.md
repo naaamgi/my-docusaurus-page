@@ -1,179 +1,102 @@
 ---
 sidebar_position: 4
+title: NetBIOS (137/138/139)
 ---
 
-# NetBIOS - 137/138/139
+# NetBIOS (137/138/139) 취약점 진단
 
-NetBIOS (Network Basic Input/Output System) 열거 및 정보 수집입니다.
+## Overview
 
-## 기본 정보
+**NetBIOS (Network Basic Input/Output System)**: LAN 내에서 컴퓨터들이 통신하기 위해 사용되는 레거시 API 및 프로토콜
 
-- **포트**: 137/UDP (Name Service), 138/UDP (Datagram Service), 139/TCP (Session Service)
-- **프로토콜**: NetBIOS over TCP/IP (NBT)
+**주요 포트**:
+- **137/UDP**: Name Service (이름 등록 및 해상도)
+- **138/UDP**: Datagram Service (비연결형 통신)
+- **139/TCP**: Session Service (연결형 통신, SMB over NetBIOS)
 
-## nbtscan
+---
 
+## 1. Reconnaissance
+
+### 기본 호스트 및 네임 조회
 ```bash
-# 기본 스캔
-nbtscan <RHOST>
-
-# 범위 스캔
-nbtscan <NETWORK>/24
+# [nbtscan] 서브넷 내 NetBIOS 호스트 및 MAC 주소 스캔
 nbtscan 192.168.1.0/24
+nbtscan -v <target>
 
-# 상세 출력
-nbtscan -v <RHOST>
-
-# 옵션
-nbtscan -r <NETWORK>/24  # UDP port 137만 사용
-nbtscan -h               # 도움말
-```
-
-## nmblookup
-
-```bash
-# NetBIOS 이름 조회
-nmblookup -A <RHOST>
-
-# 특정 이름 찾기
-nmblookup <NETBIOS_NAME>
-
-# 마스터 브라우저 찾기
+# [nmblookup] 특정 호스트의 NetBIOS 이름, 워크그룹, 마스터 브라우저 상태 조회
+nmblookup -A <target>
 nmblookup -M -- -
-
-# 워크그룹 조회
-nmblookup -d 2 '*'
 ```
 
-## Nmap
-
+### Nmap 정보 수집
 ```bash
-# NetBIOS 정보 수집
-nmap -sV -p 137,139 <RHOST>
-nmap -sU -p 137 --script nbstat <RHOST>
+# 기본 포트 스캔 및 버전 확인
+nmap -sV -p 137,139 <target>
 
-# NetBIOS 스크립트
-nmap -p 139 --script nbstat,smb-os-discovery <RHOST>
-nmap -sU -sV -T4 --script nbstat.nse -p137 <RHOST>
+# NetBIOS 특정 스크립트 실행
+nmap -sU -p 137 --script nbstat <target>
+nmap -p 139 --script nbstat,smb-os-discovery <target>
 ```
 
-## enum4linux
+---
 
+## 2. Exploitation
+
+### Enum4linux를 이용한 시스템 열거
+Null Session 취약점을 활용하여 대상 윈도우 시스템의 각종 정보 덤프
 ```bash
-# 기본 열거
-enum4linux <RHOST>
+# 전체 정보 자동 수집 (OS, 사용자, 그룹, 공유 폴더, 패스워드 정책 등)
+enum4linux -a <target>
 
-# 모든 정보
-enum4linux -a <RHOST>
-
-# 사용자 열거
-enum4linux -U <RHOST>
-
-# 공유 열거
-enum4linux -S <RHOST>
-
-# 그룹 열거
-enum4linux -G <RHOST>
-
-# OS 정보
-enum4linux -o <RHOST>
+# 특정 정보만 수집
+enum4linux -U <target>  # 사용자 목록 열거
+enum4linux -S <target>  # 공유 폴더 열거
+enum4linux -G <target>  # 그룹 정보 열거
 ```
 
-## rpcclient
-
+### rpcclient를 활용한 정밀 분석
+인증 없이(Null Session) RPC 파이프에 연결하여 내부 정보 쿼리
 ```bash
-# 연결 (Null Session)
-rpcclient -U "" -N <RHOST>
+# Null Session 연결
+rpcclient -U "" -N <target>
 
-# 연결 후 명령어
-rpcclient $> enumdomusers
-rpcclient $> enumdomgroups
-rpcclient $> queryuser <RID>
-rpcclient $> querygroupmem <RID>
-rpcclient $> getdompwinfo
+# [연결 후] 세부 명령어 실행
+rpcclient $> enumdomusers     # 도메인 사용자 열거
+rpcclient $> enumdomgroups    # 도메인 그룹 열거
+rpcclient $> queryuser <RID>  # 특정 사용자 상세 정보 쿼리
 ```
 
-## smbclient
-
+### 공유 폴더(SMB) 익명 접근
+NetBIOS Session Service(139)를 통해 연결되는 공유 자원 탐색
 ```bash
-# 공유 목록
-smbclient -L //<RHOST>/ -N
+# 익명(Null Session)으로 공유 목록 조회
+smbclient -L //<target>/ -N
 
-# Null Session
-smbclient //<RHOST>/share -N
-
-# 인증
-smbclient //<RHOST>/share -U <USERNAME>
+# 특정 공유 폴더 익명 접속 시도
+smbclient //<target>/IPC$ -N
 ```
 
-## NetBIOS Name Types
+---
 
-| Suffix | Type | Description |
-|--------|------|-------------|
-| `<00>` | U | Workstation Service |
-| `<03>` | U | Messenger Service |
-| `<06>` | U | RAS Server Service |
-| `<1B>` | U | Domain Master Browser |
-| `<1C>` | G | Domain Controllers |
-| `<1D>` | U | Master Browser |
-| `<1E>` | G | Browser Service Elections |
-| `<20>` | U | File Server Service |
+## 3. Advanced Techniques
 
-**U** = Unique  
-**G** = Group
+### NetBIOS Name Suffix 코드 식별
+`nmblookup` 결과에서 나타나는 Suffix 코드를 통한 대상 서버 역할 식별
+- `<00> (U)`: 일반 Workstation Service
+- `<03> (U)`: Messenger Service (일반 사용자)
+- `<1B> (U)`: Domain Master Browser (PDC 역할)
+- `<1C> (G)`: Domain Controllers (도메인 컨트롤러 그룹)
+- `<1D> (U)`: Local Master Browser (서브넷 내 브라우저 선출)
+- `<20> (U)`: File Server Service (파일 공유 서비스 활성화)
+※ U(Unique)는 단일 호스트, G(Group)는 다중 호스트 의미
 
-## 정보 수집
+---
 
-### 호스트 이름 및 도메인
+## 4. Post-Exploitation
 
-```bash
-nmblookup -A <RHOST>
-```
-
-출력 예시:
-```
-Looking up status of 192.168.1.100
-    DESKTOP-ABC123  <00> -         B <ACTIVE>
-    DESKTOP-ABC123  <03> -         B <ACTIVE>
-    DESKTOP-ABC123  <20> -         B <ACTIVE>
-    WORKGROUP       <00> - <GROUP> B <ACTIVE>
-    WORKGROUP       <1e> - <GROUP> B <ACTIVE>
-```
-
-### 공유 폴더
-
-```bash
-smbclient -L //<RHOST>/ -N
-```
-
-### 사용자 목록
-
-```bash
-enum4linux -U <RHOST>
-```
-
-## 취약점
-
-### Null Session
-
-```bash
-# Null Session 테스트
-rpcclient -U "" -N <RHOST>
-smbclient //<RHOST>/IPC$ -N
-enum4linux -a <RHOST>
-```
-
-### 정보 유출
-
-- 사용자 목록
-- 공유 폴더
-- 도메인/워크그룹 정보
-- OS 버전
-
-## 참고
-
-- NetBIOS는 구형 프로토콜이지만 여전히 많이 사용됨
-- Null Session 공격으로 인증 없이 정보 수집 가능
-- SMB와 함께 사용됨
-- Windows 환경에서 주로 사용
-- Firewall에서 차단 권장
+### 주요 유출 정보 활용
+Null Session 공격이나 NetBIOS 열거를 통해 수집한 정보는 다음 공격에 활용
+- **사용자 목록**: 브루트포스(Brute-Force) 공격 및 패스워드 스프레이 대상 확보
+- **OS/도메인 정보**: 타겟 네트워크의 도메인 컨트롤러 및 아키텍처 파악
+- **공유 폴더**: IPC$ 이외에 읽기/쓰기 권한이 부여된 민감 데이터 폴더 탐색

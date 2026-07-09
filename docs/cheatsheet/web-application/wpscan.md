@@ -1,193 +1,88 @@
 ---
 sidebar_position: 10
+title: WPScan
 ---
 
-# WPScan
+# WPScan (WordPress 취약점 스캐너)
 
-> https://github.com/wpscanteam/wpscan
+## Overview
 
-WordPress 취약점 스캐너입니다.
+**WPScan**: Ruby로 작성된 WordPress 전용 블랙박스 취약점 스캐너. 테마, 플러그인, 사용자 계정 열거 및 알려진 취약점 연계 테스트에 필수적인 도구.
 
-## 설치
+- **주의**: API 토큰(WPVulnDB)을 등록해야 최신 취약점 매칭 정보를 받을 수 있음 (`https://wpscan.com/` 에서 발급)
 
+---
+
+## 1. Reconnaissance (스캐닝 및 열거)
+
+### 기본 정보 및 설정 파일 스캔
+대상 워드프레스 사이트의 버전, 사용 중인 테마, 헤더 정보 확인
 ```bash
-# Kali Linux
-sudo apt install wpscan
+# 기본 스캔 (TLS 인증서 오류 무시: --disable-tls-checks)
+wpscan --url https://<target> --disable-tls-checks
 
-# RubyGems
-gem install wpscan
-
-# Docker
-docker pull wpscanteam/wpscan
+# 랜덤 User-Agent 사용 (WAF 차단 우회 시도)
+wpscan --url https://<target> --random-user-agent
 ```
 
-## 기본 옵션
-
+### 대상 요소 열거 (Enumerate 옵션)
+플러그인, 테마, 사용자 계정 등 세부 정보 추출
 ```bash
---url              # 타겟 URL
---enumerate        # 열거 옵션 (u,t,p,cb,dbe)
---disable-tls-checks  # TLS/SSL 검증 비활성화
---api-token        # WPVulnDB API 토큰
--U                 # 사용자명 목록
--P                 # 비밀번호 목록
--t                 # 스레드 수
---plugins-detection   # 플러그인 탐지 모드
---random-user-agent   # 랜덤 User-Agent
+-e u    # 사용자 계정 (User) 열거
+-e p    # 플러그인 (Plugin) 열거
+-e t    # 테마 (Theme) 열거
+-e vp   # 취약한 플러그인(Vulnerable Plugin) 열거
+-e vt   # 취약한 테마(Vulnerable Theme) 열거
+-e cb   # 설정 백업 파일 (Config Backups)
+-e dbe  # 데이터베이스 덤프 (Db Exports)
+
+# 종합 열거 예시 (사용자, 테마, 취약한 플러그인)
+wpscan --url https://<target> -e u,t,vp --api-token <YOUR_API_TOKEN>
 ```
 
-## 열거 옵션
+---
 
+## 2. Exploitation (공격 수행)
+
+### 플러그인 탐지 강도 조절 (Plugins Detection)
+기본 모드(Passive)에서 발견되지 않는 플러그인을 무차별 접근을 통해 식별
 ```bash
-u   # 사용자 열거
-t   # 테마 열거
-p   # 플러그인 열거
-cb  # Config Backups
-dbe # Db Exports
-vp  # 취약한 플러그인
-vt  # 취약한 테마
+# Aggressive 모드: 대량의 요청을 발생시켜 설치된 플러그인 강제 확인
+wpscan --url https://<target> -e p --plugins-detection aggressive
+
+# Mixed 모드: Passive와 Aggressive 혼합
+wpscan --url https://<target> -e p --plugins-detection mixed
 ```
 
-## 기본 스캔
-
-### 사용자, 테마, 플러그인 열거
-
+### 계정 브루트포스 (Brute-Force) 공격
+열거된 사용자 계정(`-U`)에 대해 패스워드 워드리스트(`-P`)를 대입
 ```bash
-wpscan --url https://<RHOST> --enumerate u,t,p
+# 특정 계정(admin) 비밀번호 대입 공격 (쓰레드 50)
+wpscan --url http://<target> -U admin -P /usr/share/wordlists/rockyou.txt -t 50
+
+# 열거를 통해 수집된 다수 계정에 대입 공격
+wpscan --url http://<target> -U users.txt -P passwords.txt
 ```
 
-### TLS 검증 비활성화
+---
 
+## 3. Advanced Techniques
+
+### 주요 헌팅 포인트 (공통 발견 사항 점검)
+WPScan 결과를 토대로 다음 항목들에 대한 수동 점검 연계
+- **xmlrpc.php 활성화**: 대규모 핑백(Pingback) 요청을 통한 DDoS, 혹은 초고속 브루트포스 가능성 존재
+- **wp-admin / wp-login.php 노출**: 관리자 페이지 직접 접근 가능 여부
+- **readme.html 노출**: 정확한 워드프레스 코어 버전 확인 가능
+- **wp-config.php.save 등 백업 파일**: DB 크리덴셜 평문 노출 확인
+
+### 우회 및 프록시 설정
 ```bash
-wpscan --url https://<RHOST> --disable-tls-checks
-wpscan --url https://<RHOST> --disable-tls-checks --enumerate u,t,p
+# HTTP 기본 인증(Basic Auth)이 걸린 대상 스캔
+wpscan --url https://<target> --http-auth admin:password
+
+# 세션 쿠키 수동 주입
+wpscan --url https://<target> --cookie-string "PHPSESSID=123456789"
+
+# 프록시 연동 (Burp Suite 로깅 등)
+wpscan --url https://<target> --proxy http://127.0.0.1:8080
 ```
-
-## 플러그인 탐지
-
-### Passive 모드 (기본)
-
-```bash
-wpscan --url https://<RHOST>
-```
-
-### Aggressive 모드
-
-```bash
-# 더 많은 플러그인 탐지
-wpscan --url https://<RHOST> --plugins-detection aggressive
-```
-
-### Mixed 모드
-
-```bash
-wpscan --url https://<RHOST> --plugins-detection mixed
-```
-
-## 브루트포스 공격
-
-```bash
-# 사용자명 브루트포스
-wpscan --url http://<RHOST> -U <USERNAME> -P passwords.txt -t 50
-
-# 여러 사용자
-wpscan --url http://<RHOST> -U users.txt -P passwords.txt -t 50
-
-# 특정 사용자에 대한 비밀번호 브루트포스
-wpscan --url http://<RHOST> -U admin -P /usr/share/wordlists/rockyou.txt
-```
-
-## API 토큰 사용
-
-WPVulnDB API 토큰으로 취약점 정보 확인:
-
-```bash
-# 토큰 등록: https://wpscan.com/
-wpscan --url https://<RHOST> --api-token <YOUR_API_TOKEN>
-```
-
-## 출력 형식
-
-```bash
-# JSON 출력
-wpscan --url https://<RHOST> -f json -o output.json
-
-# CLI 형식
-wpscan --url https://<RHOST> -f cli
-```
-
-## 고급 옵션
-
-### 프록시 사용
-
-```bash
-wpscan --url https://<RHOST> --proxy http://127.0.0.1:8080
-```
-
-### User-Agent 변경
-
-```bash
-wpscan --url https://<RHOST> --random-user-agent
-wpscan --url https://<RHOST> --user-agent "Custom UA"
-```
-
-### 쿠키 사용
-
-```bash
-wpscan --url https://<RHOST> --cookie-string "name=value"
-```
-
-### HTTP 인증
-
-```bash
-wpscan --url https://<RHOST> --http-auth user:pass
-```
-
-## 취약점 탐지
-
-```bash
-# 취약한 플러그인만
-wpscan --url https://<RHOST> --enumerate vp
-
-# 취약한 테마만
-wpscan --url https://<RHOST> --enumerate vt
-
-# 모든 취약점
-wpscan --url https://<RHOST> --enumerate vp,vt
-```
-
-## 예제 워크플로우
-
-### 1. 초기 정찰
-
-```bash
-wpscan --url https://<RHOST> --disable-tls-checks
-```
-
-### 2. 상세 열거
-
-```bash
-wpscan --url https://<RHOST> --enumerate u,t,p --plugins-detection aggressive --api-token <TOKEN>
-```
-
-### 3. 브루트포스
-
-```bash
-wpscan --url https://<RHOST> -U admin,user -P /usr/share/wordlists/rockyou.txt -t 50
-```
-
-## 일반적인 발견 사항
-
-- **wp-admin** 로그인 페이지 노출
-- **xmlrpc.php** 활성화 (브루트포스 가능)
-- **readme.html** 버전 정보 노출
-- 오래된 플러그인/테마 취약점
-- 사용자명 열거 가능
-- 디렉토리 리스팅 활성화
-
-## 참고
-
-- API 토큰 없이도 기본 스캔 가능
-- Aggressive 모드는 더 많은 요청 발생
-- 브루트포스 시 계정 잠금 주의
-- xmlrpc.php로 더 빠른 브루트포스 가능
-- WordPress 5.0+ 부터 REST API로 사용자 열거 가능

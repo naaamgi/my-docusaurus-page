@@ -1,13 +1,12 @@
 ---
 sidebar_position: 10
-title: 데이터 저장소 점검 - Android (Data Storage / Android)
-description: 모바일 진단 - Android SharedPreferences / SQLite / 파일 / Android Keystore / Scoped Storage / 백업 점검 + PoC + 대응방안
+title: 데이터 저장소 점검 - Android
+description: 모바일 진단 - Android SharedPreferences / SQLite / 파일 / Android Keystore / Scoped Storage / 백업 점검 절차와 판정 기준
 keywords: [Data Storage, SharedPreferences, SQLite, Android Keystore, Scoped Storage, allowBackup, EncryptedSharedPreferences, Cache, MASVS-STORAGE]
 draft: false
 ---
 
-# 데이터 저장소 점검 - Android (Data Storage / Android)
-
+# 데이터 저장소 점검 - Android
 > 앱이 단말 내에 저장하는 데이터 (자격증명 / 토큰 / 개인정보 / 결제 정보 등) 가 **평문 / 약한 암호화 / 부적절한 위치** 에 저장되는지 점검.
 > 단말이 분실 / 탈취되거나 다른 앱이 같은 단말에 침투했을 때 어떤 데이터가 노출되는지 확인.
 
@@ -56,7 +55,7 @@ Android 앱은 (1) 앱 전용 컨테이너 (`/data/data/<pkg>/`), (2) 외부 저
 ### Step 1. 앱 컨테이너 진입 + 구조 파악
 
 ```bash
-# 루팅 단말 (setup-android.md 환경)
+# 루팅 단말
 adb shell
 su
 cd /data/data/com.target.app
@@ -80,10 +79,8 @@ adb shell "run-as com.target.app ls -la /data/data/com.target.app"
 
 **왜 이 흐름인지**: 단순히 컨테이너만 보면 어느 파일이 점검 대상인지 모른다. **사용자 액션 ↔ 저장 변화** 를 매핑해야 어떤 기능에서 어떤 데이터가 저장되는지 명확.
 
-### Step 3. 각 위치별 점검 (케이스 1~7)
-
-### Step 4. Keystore 사용 검증 (Frida)
-
+### Step 3. 각 위치별 점검
+### Step 4. Keystore 사용 검증
 암호화 키가 있어도 **Android Keystore 가 아닌 코드 / 파일에 저장**되어 있으면 의미 없음. Frida 로 Keystore API 호출을 추적해 사용 여부 확인.
 
 ---
@@ -176,8 +173,7 @@ find /data/data/com.target.app/cache -type f
 
 **판정**: 평문 자격증명 / 개인정보 → Medium ~ High.
 
-### 케이스 4: External Storage (Scoped Storage 위반)
-
+### 케이스 4: External Storage
 **언제 점검하는지**: 첨부파일 / 다운로드 / 사진 저장 기능. Android 11+ 의 Scoped Storage 가 적용 안 된 케이스.
 
 ```bash
@@ -238,18 +234,16 @@ Java.perform(function () {
 
 **판정**: AndroidKeyStore 미사용 / `UserAuthenticationRequired` 미적용 / 약한 알고리즘 (DES, ECB, MD5) 사용 → 미흡.
 
-### 케이스 6: `allowBackup="true"` (Android 12 미만 단말 대응)
-
+### 케이스 6: `allowBackup="true"`
 **언제 점검하는지**: AndroidManifest 점검 시. Android 12+ 단말에서는 영향 축소되었지만 11 이하 단말 대응 필요.
 
 ```bash
-# 매니페스트 확인 (static-analysis.md 의 apktool 결과)
+# 매니페스트 확인
 grep -i "allowBackup" target-decoded/AndroidManifest.xml
-# android:allowBackup="true"     ← 위험 (구단말)
-
-# 실제 백업 시도 (Android 11 이하 단말)
+# android:allowBackup="true"     ← 위험
+# 실제 백업 시도
 adb backup -noapk com.target.app -f target.ab
-# 단말에서 "백업" 버튼 탭 (사용자 동의 필요)
+# 단말에서 "백업" 버튼 탭
 # target.ab 가 0 바이트 아니면 백업 가능
 
 # 추출
@@ -317,222 +311,6 @@ Java.perform(function () {
 - [ ] `EncryptedSharedPreferences` (Jetpack Security) 사용 시 파일이 암호문이면 안전 가능성 높음 — Frida 로 키 위치 추가 검증
 - [ ] 일부 식별자 (UUID / 세션 ID) 는 평문이어도 단독으론 무영향 — 결합 시나리오 평가
 - [ ] 캐시 이미지 / 임시 파일은 통상 무영향 — 단, 결제 영수증 / 신분증 사진 등은 민감
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-### PoC 1 — [Data Storage] SharedPreferences 평문 access_token 저장
-
-1. `setup-android.md` 의 루팅 단말 환경 셋업 완료
-2. 점검 대상 앱 (`com.target.app`) 신규 설치 → 로그인 수행
-3. 앱 컨테이너 진입 → `shared_prefs/` 의 XML 직접 확인
-
-**1차 — 앱 컨테이너 접근:**
-
-```bash
-$ adb shell
-target:/ $ su
-target:/ # cd /data/data/com.target.app/shared_prefs
-target:/data/data/com.target.app/shared_prefs # ls
-auth_prefs.xml  user_prefs.xml  ...
-```
-
-**2차 — 평문 자격증명 노출 확인:**
-
-```xml
-<!-- /data/data/com.target.app/shared_prefs/auth_prefs.xml -->
-<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
-<map>
-    <string name="username">victim@example.com</string>
-    <string name="password">P@ssw0rd123</string>
-    <string name="access_token">eyJhbGciOiJIUzI1NiIs...</string>
-    <string name="refresh_token">rt_a1b2c3d4e5f6...</string>
-    <boolean name="auto_login" value="true"/>
-</map>
-```
-
-**확인 사항:**
-- SharedPreferences 에 비밀번호 + 액세스 토큰 + 리프레시 토큰이 모두 평문 저장
-- 단말 분실 / 탈취 / 다른 앱이 권한 상승 시 즉시 노출 → 자격증명 + 세션 모두 탈취
-- 안드로이드 백업 (allowBackup) 가 활성화돼 있다면 PC 로 추출 가능
-- 안전 패턴: `EncryptedSharedPreferences` (Jetpack Security) + AndroidKeystore (UserAuthenticationRequired) + 비밀번호는 저장 자체 금지 (Refresh Token 만)
-
----
-
-### PoC 2 — [Data Storage] SQLite DB 에 카드번호 평문 + 키가 코드에 하드코드
-
-1. `setup-android.md` 환경 셋업 완료
-2. 결제 카드 등록 후 `/databases/payments.db` 추출
-3. SQLite 가 자체 암호화 적용되어 있어 Frida 로 키 후킹
-
-**1차 — DB 추출:**
-
-```bash
-$ adb pull /data/data/com.target.app/databases/payments.db ./
-$ file payments.db
-payments.db: SQLite 3.x database, ...
-```
-
-**2차 — 평문 컬럼 직접 조회:**
-
-```bash
-$ sqlite3 payments.db
-sqlite> .tables
-cards   transactions   users
-
-sqlite> .schema cards
-CREATE TABLE cards (id INTEGER, card_no TEXT, expiry TEXT, cvc TEXT, holder TEXT);
-
-sqlite> SELECT * FROM cards;
-1|4111-1111-1111-1111|12/27|123|VICTIM KIM
-```
-
-**확인 사항:**
-- 카드 번호 / 만료일 / CVC / 명의 모두 평문 저장
-- PCI-DSS / 개인정보보호법 / 전자금융감독규정 위반 가능성
-- AndroidKeystore + EncryptedSharedPreferences / SQLCipher (키는 Keystore) 적용 권장
-- CVC 는 저장 자체 금지 (PCI-DSS Requirement 3.2)
-
----
-
-## 영향도 분석
-
-- **기밀성 (Confidentiality)**: 🔴 — 자격증명 / 결제 / 주민번호 평문은 단말 탈취 / 권한 상승 시 즉시 노출
-- **무결성 (Integrity)**: 🟡 — 평문 저장은 변조도 쉬움 (단말 root 후 파일 직접 수정)
-- **가용성 (Availability)**: 🟢 — 직접 영향 없음
-- **추가 위협**:
-  - 단말 분실 / 도난 시 즉시 자격증명 노출 → 계정 탈취
-  - 다른 앱이 권한 상승 후 컨테이너 접근 (런타임 결함 / 백업 결함)
-  - 점검 단말 인계 / 폐기 시 데이터 미정리 → 인수자 노출
-  - PCI-DSS / 개인정보보호법 / 전자금융감독규정 위반 → 규제 / 과태료
-
-**비즈니스 임팩트:**
-모바일 데이터 저장 결함은 단일 결함만으로 다수 사용자 자격증명 / 결제 정보 노출 가능. 특히 비밀번호 / 카드번호 / 주민번호 평문 저장은 컴플라이언스 측면에서 즉시 보고 / 개선 대상. **Android Keystore + Jetpack Security + 저장 자체 최소화** 가 권장 패턴.
-
----
-
-## 대응방안
-
-### 개발자 관점 (필수)
-
-1. **저장 자체 최소화** — 비밀번호는 저장 금지 (Refresh Token / Biometric 으로 대체). 카드 CVC 는 어떤 경우에도 저장 금지 (PCI-DSS 3.2).
-
-2. **EncryptedSharedPreferences (Jetpack Security)** — SharedPreferences 사용 시 표준 라이브러리:
-
-   ```kotlin
-   val masterKey = MasterKey.Builder(context)
-       .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-       .setUserAuthenticationRequired(true, 60)   // 60초 내 인증 캐시
-       .build()
-
-   val prefs = EncryptedSharedPreferences.create(
-       context,
-       "auth_prefs",
-       masterKey,
-       EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-       EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-   )
-   prefs.edit().putString("refresh_token", token).apply()
-   ```
-
-3. **Android Keystore 사용 + 적절한 옵션:**
-
-   ```kotlin
-   val keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-   keyGen.init(
-       KeyGenParameterSpec.Builder("my_key", KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-           .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-           .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-           .setKeySize(256)
-           .setUserAuthenticationRequired(true)              // 생체 / PIN 후에만
-           .setInvalidatedByBiometricEnrollment(true)        // 지문 추가 시 키 무효화
-           .setUnlockedDeviceRequired(true)                  // 잠금 해제 상태에서만
-           // .setIsStrongBoxBacked(true)                    // StrongBox 가능 단말
-           .build()
-   )
-   keyGen.generateKey()
-   ```
-
-4. **SQLite 암호화 — SQLCipher (키는 Keystore 에서만)**:
-
-   ```kotlin
-   // 키는 Android Keystore 에서 임시 추출, 사용 즉시 폐기
-   val key = retrieveKeyFromKeystoreOnce()
-   val db = SQLiteDatabase.openOrCreateDatabase(file, key, null)
-   key.fill(0.toByte())   // 메모리 즉시 폐기
-   ```
-
-5. **Scoped Storage 적용 (Android 10+)**:
-
-   ```kotlin
-   // AndroidManifest.xml — Scoped Storage 강제 (legacy 옵션 사용 안 함)
-   <application android:requestLegacyExternalStorage="false">
-
-   // 외부 저장소 사용 시 MediaStore API
-   val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-   ```
-
-6. **`allowBackup="false"` 또는 `dataExtractionRules` (Android 12+):**
-
-   ```xml
-   <!-- 단순 차단 -->
-   <application
-       android:allowBackup="false"
-       android:fullBackupContent="false"
-       android:dataExtractionRules="@xml/data_extraction_rules">
-
-   <!-- res/xml/data_extraction_rules.xml — 세밀 제어 -->
-   <data-extraction-rules>
-       <cloud-backup>
-           <exclude domain="sharedpref" path="auth_prefs.xml"/>
-           <exclude domain="database" path="payments.db"/>
-       </cloud-backup>
-       <device-transfer>
-           <exclude domain="sharedpref" path="auth_prefs.xml"/>
-       </device-transfer>
-   </data-extraction-rules>
-   ```
-
-7. **로그 / 클립보드 정리:**
-
-   ```kotlin
-   // Logcat — Release 빌드는 Log.d 자동 제거 (ProGuard / R8)
-   // build.gradle
-   buildTypes {
-       release {
-           minifyEnabled true
-           proguardFiles ... // -assumenosideeffects class android.util.Log { *; }
-       }
-   }
-
-   // 클립보드 — OTP / 카드번호 자동 정리
-   clipboard.setPrimaryClip(ClipData.newPlainText("otp", code))
-   Handler(Looper.getMainLooper()).postDelayed({
-       clipboard.clearPrimaryClip()
-   }, 60_000)
-   ```
-
-### 운영자 관점
-
-1. **MDM 정책 — 단말 잠금 / 저장소 암호화 강제** — 사내 / 점검 단말 표준화.
-2. **인계 / 폐기 시 단말 초기화 의무화.**
-
-### 위험 / 안전 코드 비교
-
-```kotlin
-// 위험 — 평문 SharedPreferences
-val prefs = getSharedPreferences("auth", MODE_PRIVATE)
-prefs.edit().putString("password", password).apply()         // ← 평문 저장
-
-// 위험 — 자체 키 + ECB
-val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")
-val key = SecretKeySpec("hardcodedKey1234".toByteArray(), "AES")    // ← 키 하드코드 + ECB
-cipher.init(Cipher.ENCRYPT_MODE, key)
-
-// 안전 — EncryptedSharedPreferences + Keystore + AES-GCM
-// (위 예시 참조)
-```
 
 ---
 

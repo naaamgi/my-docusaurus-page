@@ -1,13 +1,12 @@
 ---
 sidebar_position: 3
-title: 점검 환경 구축 - iOS (iOS Setup)
+title: 점검 환경 구축 - iOS
 description: 모바일 진단 - iOS 점검 환경 구축 (탈옥 / Sileo / Frida / Burp 프로파일+CA 신뢰 / IPA 추출 / 트러블슈팅)
 keywords: [iOS, Jailbreak, palera1n, Dopamine, unc0ver, Sileo, Frida, Burp Suite, IPA, frida-ios-dump, MASVS, MASTG, 모바일 환경 구축]
 draft: false
 ---
 
-# 점검 환경 구축 - iOS (iOS Setup)
-
+# 점검 환경 구축 - iOS
 > iOS 앱 점검에 필요한 기본 환경 (탈옥 / Sileo / Frida / Burp 프로파일·CA 신뢰 / IPA 추출) 셋업.
 > Android 와 달리 단말 / iOS 버전 / 탈옥 도구 매칭이 까다로워, **단말 + iOS 버전을 먼저 정하고 거기 맞는 탈옥 도구를 고르는 흐름**.
 
@@ -82,7 +81,7 @@ iOS 앱 점검은 (1) 탈옥된 실기기, (2) 패키지 매니저 (Sileo) + Fri
 # macOS 예시
 brew install --cask palera1n
 
-# 단말을 DFU 모드로 진입 (단말별 키 조합 다름)
+# 단말을 DFU 모드로 진입
 # iPhone 8/X: 전원 + 음량- 동시 → 화면 꺼지면 음량- 만 유지
 
 palera1n -l            # rootless
@@ -193,8 +192,7 @@ iOS 10.3+ 이후 사용자 설치 CA 는 **명시적으로 "완전 신뢰" 토�
 
 > **점검 대상 앱은 여전히 캡처 실패할 수 있음** — SSL Pinning 적용 시. 해당 케이스는 `ssl-pinning-bypass.md` 의 영역.
 
-### Step 5. IPA 추출 (frida-ios-dump)
-
+### Step 5. IPA 추출
 **왜 IPA 추출이 필요한지**: App Store 배포 IPA 는 FairPlay 로 암호화되어 있어, **탈옥 단말에서 메모리 덤프**를 통해 복호화된 IPA 를 얻어야 정적 분석 (`static-analysis.md`) 이 가능하다.
 
 ```bash
@@ -211,10 +209,10 @@ frida-ps -Uai | grep -i <KEYWORD>
 # PID  Name              Identifier
 # 567  TargetApp         com.target.app
 
-# 덤프 (복호화된 IPA 생성)
+# 덤프
 ./dump.py com.target.app -o target.ipa
 
-# 결과 — target.ipa 가 PC 에 생성됨 (FairPlay 복호화 완료)
+# 결과 — target.ipa 가 PC 에 생성됨
 ```
 
 **언제 쓰는지**: App Store 배포 앱 점검. 사내 빌드 / TestFlight IPA 는 이미 복호화 상태이므로 **`ipatool` 로 직접 다운로드** 가능.
@@ -255,7 +253,7 @@ ipatool download -b com.target.app -o ./target.ipa
 idevice_id -l
 # UUID 가 출력되어야 함
 
-# 단말 frida-server 가 동작 중인지 (단말 SSH 후)
+# 단말 frida-server 가 동작 중인지
 launchctl list | grep frida
 # re.frida.server   ...
 
@@ -272,8 +270,7 @@ launchctl load   /Library/LaunchDaemons/re.frida.server.plist
 - 프로파일 설치는 했지만 신뢰 토글을 안 켰을 가능성 (가장 흔한 실수)
 ```
 
-### 점검 대상 앱만 HTTPS 캡처 실패 (Safari 는 정상)
-
+### 점검 대상 앱만 HTTPS 캡처 실패
 → **앱이 SSL Pinning 적용** — `ssl-pinning-bypass.md` 참조 (Frida 스크립트가 iOS 17 에서도 가장 안정적).
 
 ### 앱이 실행 즉시 종료
@@ -283,11 +280,10 @@ launchctl load   /Library/LaunchDaemons/re.frida.server.plist
 ### `frida-ios-dump` 가 SSH 연결 실패
 
 ```bash
-# SSH 가 단말에 설치되어 있어야 함 (Dropbear 또는 OpenSSH)
+# SSH 가 단말에 설치되어 있어야 함
 # Sileo 에서 "OpenSSH" 또는 "Dropbear" 설치
-# 단말 SSH 기본 패스워드: alpine (반드시 변경)
-
-# 포트 포워딩 (USB)
+# 단말 SSH 기본 패스워드: alpine
+# 포트 포워딩
 iproxy 2222 22
 ssh root@127.0.0.1 -p 2222
 ```

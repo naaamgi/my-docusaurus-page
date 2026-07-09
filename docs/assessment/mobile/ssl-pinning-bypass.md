@@ -1,13 +1,12 @@
 ---
 sidebar_position: 6
-title: SSL Pinning 우회 (SSL Pinning Bypass)
-description: 모바일 진단 - Android/iOS SSL Pinning 우회 (Frida 스크립트 / Objection / Smali 패치 / SSL Kill Switch) + 판정 기준 + 대응방안
+title: SSL Pinning 우회
+description: 모바일 진단 - Android/iOS SSL Pinning 우회 (Frida 스크립트 / Objection / Smali 패치 / SSL Kill Switch) + 판정 기준
 keywords: [SSL Pinning, Certificate Pinning, OkHttp, TrustManager, NSURLSession, TrustKit, Frida, Objection, Smali Patch, MASVS-NETWORK]
 draft: false
 ---
 
-# SSL Pinning 우회 (SSL Pinning Bypass)
-
+# SSL Pinning 우회
 > 앱이 자체적으로 인증서 / 공개키를 검증해 **Burp 의 시스템 CA 신뢰만으로는 HTTPS 캡처가 안 되는 상황** 을 우회.
 > 점검 결과로서는 "Pinning 적용 여부 / 우회 가능 여부 / 우회 후 평문 노출 항목" 세 가지를 모두 보고.
 
@@ -62,8 +61,7 @@ SSL Pinning 은 **MITM 방어** 가 본질이지만, 점검자 입장에선 (1) 
    - 일부 트래픽만 캡처됨           → 부분 Pinning (특정 도메인만)
 ```
 
-### Step 2. 구현 위치 식별 (정적 분석)
-
+### Step 2. 구현 위치 식별
 `static-analysis.md` 의 jadx / Hopper / class-dump 로 다음 키워드 검색:
 
 ```
@@ -82,8 +80,7 @@ iOS (Objective-C / Swift):
   - "SSLPinning", "PinningMode"           → 다양한 라이브러리
 ```
 
-### Step 3. 표준 우회 시도 (난이도 순)
-
+### Step 3. 표준 우회 시도
 (1) Objection 자동 → (2) Frida 표준 스크립트 → (3) 라이브러리 전용 스크립트 → (4) Smali 패치 / Native 후킹.
 
 ### Step 4. 우회 후 검증
@@ -95,8 +92,7 @@ iOS (Objective-C / Swift):
 
 ## 페이로드 / 우회 케이스
 
-### 케이스 1: Objection 자동 우회 (가장 빠름)
-
+### 케이스 1: Objection 자동 우회
 **언제 쓰는지**: 점검 초기 / 표준 라이브러리 (OkHttp, TrustKit, AFNetworking) 사용 시.
 
 ```bash
@@ -113,8 +109,7 @@ objection -g com.target.app explore
 
 **한계**: 자체 구현 / Native Pinning / TrustKit Strict 모드는 자동 명령으로 우회 불가 → 케이스 2~5 로.
 
-### 케이스 2: Frida 통합 스크립트 (Android — 다중 라이브러리 일괄 우회)
-
+### 케이스 2: Frida 통합 스크립트
 **언제 쓰는지**: 어떤 라이브러리를 쓰는지 모를 때 / 여러 라이브러리 혼용. 점검 표준 첫 시도.
 
 ```javascript
@@ -172,8 +167,7 @@ frida -U -f com.target.app -l android-pinning-bypass.js --no-pause
 
 **판정**: 콘솔에 `[+] ... bypassed` 메시지가 보이고 Burp 에서 평문 캡처되면 우회 성공. 메시지가 없으면 다른 구현 → 케이스 3 (정적 분석 후 자체 구현 후킹) 또는 케이스 4 (Smali 패치).
 
-### 케이스 3: Frida 통합 스크립트 (iOS — 다중 라이브러리 일괄 우회)
-
+### 케이스 3: Frida 통합 스크립트
 **언제 쓰는지**: iOS 표준 라이브러리 / TrustKit / AFNetworking 일괄 우회 시도.
 
 ```javascript
@@ -248,7 +242,7 @@ frida -U -f com.target.app -l ios-pinning-bypass.js --no-pause
 # 1) APK 디컴파일
 apktool d target.apk -o target-decoded
 
-# 2) Network Security Config 변경 (간단한 Pinning 무력화)
+# 2) Network Security Config 변경
 # target-decoded/AndroidManifest.xml 의 networkSecurityConfig 가
 # 가리키는 XML 파일을 수정 — pin-set 제거, 디버그 신뢰 추가:
 
@@ -264,13 +258,12 @@ apktool d target.apk -o target-decoded
 </network-security-config>
 
 # 3) 코드 내 CertificatePinner 호출 부분 Smali 직접 수정
-#    (jadx 로 위치 확인 후 .smali 파일에서 invoke-virtual ... CertificatePinner;->check 라인 nop 처리)
-
+#    
 # 4) 재패키징 + 재서명
 apktool b target-decoded -o target-patched.apk
 uber-apk-signer -a target-patched.apk
 
-# 5) 단말에 설치 (기존 앱 제거 후 재설치 — 서명 다름)
+# 5) 단말에 설치
 adb uninstall com.target.app
 adb install target-patched.apk-aligned-debugSigned.apk
 ```
@@ -296,8 +289,7 @@ if (SSL_CTX_set_verify) {
 
 **판정**: Native 후킹은 라이브러리 / 컴파일 옵션에 따라 함수명이 달라짐 (`Module.enumerateExports` 로 후보 검색). 가장 까다로운 케이스 — 정적 분석 (`static-analysis.md`) 으로 정확한 진입점 식별 필수.
 
-### 케이스 6: SSL Pinning 미적용 (Negative case)
-
+### 케이스 6: SSL Pinning 미적용
 **판정**: setup 만 마친 상태에서 점검 대상 앱이 정상 통신 + Burp 에 평문 캡처 → Pinning 미적용. **이 경우는 보고서에 "MASVS-NETWORK-2 미적용 — Pinning 부재" 로 미흡 보고**. (단, 단순 Web 앱 / Hybrid 앱은 Pinning 필수가 아닐 수도 있음 — 회사 정책 / 위험도에 따라 판단)
 
 ---
@@ -317,177 +309,6 @@ if (SSL_CTX_set_verify) {
 - [ ] 시스템 CA 신뢰가 안 된 상태에서 캡처 실패한 것을 "Pinning 적용" 으로 오판 — `setup-*.md` Step 4 검증 필수
 - [ ] 단말 시각 / 인증서 만료 문제로 인한 핸드셰이크 실패는 Pinning 무관
 - [ ] Hybrid 앱 (Cordova / Capacitor) 의 WebView 통신은 별도 흐름
-
----
-
-## PoC 양식 (보고서 붙여넣기용)
-
-### PoC 1 — [SSL Pinning] Frida 표준 스크립트로 OkHttp Pinning 우회
-
-1. `setup-android.md` 절차로 시스템 CA 신뢰 + Burp 프록시 설정 완료
-2. 점검 대상 앱 (`com.target.app`) 실행 → 통신 실패 (Pinning 가능성)
-3. `static-analysis.md` 의 jadx 로 `okhttp3.CertificatePinner` 사용 확인
-4. 케이스 2 의 통합 Frida 스크립트로 `CertificatePinner.check` 후킹
-5. 앱 재실행 → Burp 에서 모든 HTTPS 트래픽 평문 캡처
-
-**1차 — 우회 전 (Pinning 동작):**
-
-```
-앱 실행 → 로그인 화면 → 자격증명 입력 → "네트워크 오류" 표시
-Burp Proxy History → 핸드셰이크 단계에서 Connection RST
-```
-
-**2차 — Frida 스크립트 적용:**
-
-```bash
-$ frida -U -f com.target.app -l android-pinning-bypass.js --no-pause
-[+] OkHttp CertificatePinner.check bypassed
-[+] SSLContext.init replaced with custom TrustManager
-```
-
-**3차 — 우회 후 평문 캡처:**
-
-```http
-POST /api/v2/login HTTP/1.1
-Host: api.target.com
-Content-Type: application/json
-Authorization: Bearer eyJhbGc...
-
-{"username":"victim","password":"P@ssw0rd","device_id":"abc..."}
-
-HTTP/1.1 200 OK
-Content-Type: application/json
-
-{"access_token":"eyJ...","refresh_token":"...","user_id":42, "internal_role":"member"}
-```
-
-**확인 사항:**
-- 표준 Frida 스크립트 (`CertificatePinner.check` 무력화) 한 번에 우회 → Bypass-resistant 하지 않음
-- 우회 후 평문에서 자격증명 / 액세스 토큰 / 내부 사용자 ID 등 노출
-- Pinning 의 보호 효과가 일반 점검자에게 무력화됨 → MASVS-NETWORK-2 미흡 (Pinning 적용은 됐으나 우회 가능)
-- 권장: Native + 다중 라이브러리 + 무결성 검증 결합 (Bypass-resistant Pinning)
-
----
-
-## 영향도 분석
-
-- **기밀성 (Confidentiality)**: Pinning 우회 자체는 점검 환경 설정. **우회 후 평문 노출 항목 (토큰 / 개인정보)** 의 영향이 본질.
-- **무결성 (Integrity)**: 우회 후 요청 변조 가능 (Burp Repeater) → 다른 점검 흐름에 진입.
-- **추가 위협**:
-  - **MITM 가능 환경 (공용 Wi-Fi)** + Pinning 미적용 → 공격자가 자격증명 탈취
-  - Pinning 우회 가능 = 악성 앱 / 분석가 / 소비자단 분석으로 통신 프로토콜 노출 → 백엔드 API 의 비공개 엔드포인트 노출
-
-**비즈니스 임팩트:**
-SSL Pinning 은 일반 사용자 단말 (MITM) 보호 + 분석 난이도 상승 두 가지 효과. 우회 가능 여부는 분석 난이도에만 영향, MITM 보호는 여전히 유효 (탈옥 / 루팅 단말 + Frida 가 필요한 우회 vs. 일반 사용자 환경의 MITM). 보고서에선 **"Pinning 적용 / 우회 가능 / 우회 시 노출 항목"** 세 가지를 분리해 등급 산정.
-
----
-
-## 대응방안
-
-### 개발자 관점
-
-1. **Network Security Config + 핀셋 명시 (Android)**
-
-   ```xml
-   <!-- res/xml/network_security_config.xml -->
-   <network-security-config>
-       <domain-config>
-           <domain includeSubdomains="true">api.target.com</domain>
-           <pin-set expiration="2027-01-01">
-               <pin digest="SHA-256">7HIpactkIAq2Y49orFOOQKurWxmmSFZhBCoQYcRhJ3Y=</pin>
-               <!-- 백업 핀 (키 로테이션 대비) -->
-               <pin digest="SHA-256">fwza0LRMXouZHRC8Ei+4PyuldPDcf3UKgO/04cDM1oE=</pin>
-           </pin-set>
-       </domain-config>
-   </network-security-config>
-   ```
-
-2. **OkHttp `CertificatePinner` 직접 사용 (Android)**
-
-   ```java
-   CertificatePinner pinner = new CertificatePinner.Builder()
-       .add("api.target.com", "sha256/7HIpactkIAq2Y49orFOOQKurWxmmSFZhBCoQYcRhJ3Y=")
-       .add("api.target.com", "sha256/fwza0LRMXouZHRC8Ei+4PyuldPDcf3UKgO/04cDM1oE=")
-       .build();
-
-   OkHttpClient client = new OkHttpClient.Builder()
-       .certificatePinner(pinner)
-       .build();
-   ```
-
-3. **TrustKit (iOS) — 표준 라이브러리 권장**
-
-   ```swift
-   let trustKitConfig: [String: Any] = [
-       kTSKPinnedDomains: [
-           "api.target.com": [
-               kTSKPublicKeyHashes: [
-                   "7HIpactkIAq2Y49orFOOQKurWxmmSFZhBCoQYcRhJ3Y=",
-                   "fwza0LRMXouZHRC8Ei+4PyuldPDcf3UKgO/04cDM1oE="
-               ],
-               kTSKEnforcePinning: true,
-           ]
-       ]
-   ]
-   TrustKit.initSharedInstance(withConfiguration: trustKitConfig)
-   ```
-
-4. **Bypass-resistant Pinning** — 단순 Java/Swift 한 줄로 우회되지 않도록:
-   - **Native (C/C++) 로 핀 검증 로직 + 무결성 검증** 결합
-   - 코드 난독화 (DexGuard / iXGuard / LLVM Obfuscator)
-   - 런타임 무결성 검증 (앱 서명 / DEX/Mach-O 해시)
-   - Frida / 디버거 탐지와 결합 (`anti-debug-bypass.md`)
-
-5. **백업 핀 + 만료 정책** — 키 로테이션 시 앱이 죽지 않도록 항상 백업 핀 1개 이상 + `expiration` 설정.
-
-### 운영자 관점
-
-1. **인증서 회전 일정 관리** — 핀 만료 전 새 인증서 + 새 핀 동시 배포.
-2. **Pinning Failure 알림** — 클라이언트에서 Pinning 실패 시 텔레메트리 (사용자 식별 안 되게) 로 운영팀에 알림 → 잘못된 회전 / MITM 시도 탐지.
-
-### 안전 / 위험 코드 비교
-
-**Android — 위험 (Pinning 미적용):**
-
-```java
-// 기본 OkHttpClient — Pinning 없음
-OkHttpClient client = new OkHttpClient();
-
-// 위험: 모든 인증서 신뢰 (개발 중 코드 잔존)
-TrustManager[] trustAll = new TrustManager[]{
-    new X509TrustManager() {
-        public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-        public void checkServerTrusted(X509Certificate[] chain, String authType) {}  // ← 위험
-        public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[]{}; }
-    }
-};
-```
-
-**iOS — 위험 (모든 챌린지 수락):**
-
-```swift
-// 위험: 모든 서버 신뢰
-func urlSession(_ session: URLSession,
-                didReceive challenge: URLAuthenticationChallenge,
-                completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-    if let serverTrust = challenge.protectionSpace.serverTrust {
-        completionHandler(.useCredential, URLCredential(trust: serverTrust))   // ← 위험
-    }
-}
-```
-
-**평문 통신 (Android Manifest / iOS Info.plist) — 위험:**
-
-```xml
-<!-- AndroidManifest.xml -->
-<application android:usesCleartextTraffic="true">     <!-- 위험 -->
-```
-
-```xml
-<!-- Info.plist -->
-<key>NSAllowsArbitraryLoads</key>
-<true/>                                                <!-- 위험 -->
-```
 
 ---
 

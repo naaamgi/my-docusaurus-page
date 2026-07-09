@@ -1,13 +1,12 @@
 ---
 sidebar_position: 4
-title: Frida 후킹 스크립트 모음 (Frida Scripts)
+title: Frida 후킹 스크립트 모음
 description: 모바일 진단 - 자주 쓰는 Frida 후킹 패턴 (Java.use / Java.choose / ObjC.classes / Interceptor.attach) 및 클래스/메서드 enumeration
 keywords: [Frida, Java.use, Java.choose, Java.perform, ObjC.classes, Interceptor, hook, Android, iOS, MASVS, MASTG]
 draft: false
 ---
 
-# Frida 후킹 스크립트 모음 (Frida Scripts)
-
+# Frida 후킹 스크립트 모음
 > 다른 모바일 페이지에서 반복적으로 등장하는 **Frida 기본 후킹 패턴 + 자주 쓰는 스크립트** 모음.
 > 페이지별로 동일 코드를 반복하지 않기 위해 이 페이지에 정리하고, 다른 페이지에선 "이 페이지의 패턴 N 참조" 식으로 인용.
 
@@ -38,8 +37,7 @@ Frida 는 모바일 점검의 사실상 표준 동적 계측 도구. 이 페이�
 
 ## Frida 실행 패턴
 
-### 패턴 A — `-l` 옵션으로 스크립트 주입 (가장 흔함)
-
+### 패턴 A — `-l` 옵션으로 스크립트 주입
 ```bash
 # 앱이 이미 실행 중일 때 attach
 frida -U -l hook.js com.target.app
@@ -53,12 +51,11 @@ frida -U -f com.target.app -l hook.js --no-pause -o output.log
 
 **언제 spawn 모드를 쓰는지**: SSL Pinning / Root 탐지 / 자격증명 초기화 같은 **앱 시작 직후 1회만 호출되는 코드** 후킹 시. attach 모드는 너무 늦어 후킹 누락.
 
-### 패턴 B — Objection (Frida 래퍼)
-
+### 패턴 B — Objection
 ```bash
 pip3 install objection
 
-# 앱에 attach (interactive REPL)
+# 앱에 attach
 objection -g com.target.app explore
 
 # REPL 내부에서:
@@ -101,8 +98,7 @@ Java.perform(function () {
 
 **판정**: 콘솔에 `[+] checkPassword called with: ...` 로그가 찍히면 후킹 성공. 원본 반환값과 강제 반환값이 다르게 나오는지 확인.
 
-### 패턴 2 — 오버로드된 메서드 후킹 (`overload`)
-
+### 패턴 2 — 오버로드된 메서드 후킹
 ```javascript
 Java.perform(function () {
     var TargetClass = Java.use("com.target.app.Validator");
@@ -142,8 +138,7 @@ Java.perform(function () {
 
 **왜 쓰는지**: `Java.use` 는 클래스 자체 (정적 멤버 / 새 인스턴스 생성) 만 다룰 수 있다. **이미 메모리에 존재하는 인스턴스의 필드** (예: 세션 토큰, 로그인 사용자 정보) 를 보거나 변조하려면 `Java.choose`.
 
-### 패턴 4 — 메서드 인자 / 반환값 출력 (점검 초기 정찰)
-
+### 패턴 4 — 메서드 인자 / 반환값 출력
 ```javascript
 Java.perform(function () {
     var Target = Java.use("com.target.app.ApiClient");
@@ -163,8 +158,7 @@ Java.perform(function () {
 
 **언제 쓰는지**: 앱이 어떤 API 를 호출하는지 / 어떤 인자를 넣는지 모르는 상태에서 행동 관찰. Burp 만으로는 본문이 암호화되어 안 보이는 경우, 함수 호출 시점의 평문을 출력.
 
-### 패턴 5 — 클래스 / 메서드 enumeration (탐색)
-
+### 패턴 5 — 클래스 / 메서드 enumeration
 ```javascript
 Java.perform(function () {
     // 모든 로드된 클래스 중 키워드 매칭
@@ -188,8 +182,7 @@ Java.perform(function () {
 
 **언제 쓰는지**: 후킹할 메서드명을 모를 때. `crypto` / `auth` / `pin` / `validate` 같은 키워드로 후보 클래스 추리고, 그 안의 메서드 시그니처를 본 뒤 패턴 1~3 으로 후킹.
 
-### 패턴 6 — Stack Trace 출력 (호출 경로 추적)
-
+### 패턴 6 — Stack Trace 출력
 ```javascript
 Java.perform(function () {
     var Log = Java.use("android.util.Log");
@@ -233,8 +226,7 @@ if (ObjC.available) {
 
 **왜 이 패턴인지**: Objective-C 메서드는 C 함수 호출 형식 (`objc_msgSend`) 로 변환된다. `Interceptor.attach` 로 메서드 진입 / 종료 시점을 가로채고, `onLeave` 의 `retval.replace()` 로 반환값을 변조.
 
-### 패턴 2 — Swift 클래스 후킹 (mangling 주의)
-
+### 패턴 2 — Swift 클래스 후킹
 ```javascript
 // Swift 는 메서드명이 mangling 됨 — 원본명으로는 못 찾음
 // 1) 모든 클래스 출력 후 검색
@@ -255,8 +247,7 @@ Interceptor.attach(ptr("0x1001234ab"), {
 
 **언제 쓰는지**: Swift 로 작성된 앱. `ObjC.classes` 는 Swift 클래스도 일부 노출하지만, mangling 된 메서드명을 알아야 후킹 가능 → `Module.enumerateExports` 로 후보 검색.
 
-### 패턴 3 — NSURLSession 콜백 / 응답 출력 (네트워크 정찰)
-
+### 패턴 3 — NSURLSession 콜백 / 응답 출력
 ```javascript
 if (ObjC.available) {
     var NSURLSession = ObjC.classes.NSURLSession;
@@ -321,8 +312,7 @@ ObjC.classes.LoginManager.$ownMethods.forEach(function (m) { console.log(m); });
 
 ## 공용 정찰 스크립트
 
-### 1. 모든 메서드 호출 추적 (`Stalker` / Objection 의 `watch class`)
-
+### 1. 모든 메서드 호출 추적
 ```bash
 # Objection 으로 빠르게
 objection -g com.target.app explore
@@ -332,16 +322,14 @@ objection -g com.target.app explore
 
 → 해당 클래스의 모든 메서드 호출이 인자 / 반환값과 함께 출력됨. 점검 초기에 앱 동작 파악용.
 
-### 2. 후킹 라이브 리로드 (스크립트 수정 → 즉시 반영)
-
+### 2. 후킹 라이브 리로드
 ```bash
 # Frida 의 -l 옵션은 파일 변경 감지 + 자동 재주입 지원
 frida -U -f com.target.app -l hook.js --no-pause
 # hook.js 를 에디터에서 저장하면 자동 재주입
 ```
 
-### 3. 콘솔 출력 색상 (가독성)
-
+### 3. 콘솔 출력 색상
 ```javascript
 console.log("\x1b[32m[+] success\x1b[0m");
 console.log("\x1b[31m[!] fail\x1b[0m");
@@ -377,8 +365,7 @@ console.log("\x1b[33m[*] info\x1b[0m");
 
 → (1) 클래스명 / 메서드명이 변경됐을 가능성 (난독화 — ProGuard / DexGuard / Bitcode), (2) attach 시점이 너무 늦음 → spawn 모드 (`-f`) 로 전환, (3) 실제로 그 코드 경로가 호출되지 않음.
 
-### 난독화된 클래스명 (`a.b.c.d`)
-
+### 난독화된 클래스명
 → 정적 분석 (`static-analysis.md`) 의 jadx / Hopper 로 원본 매핑 확인 후 후킹.
 
 ---

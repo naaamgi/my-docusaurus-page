@@ -1,13 +1,12 @@
 ---
 sidebar_position: 2
-title: 점검 환경 구축 - Android (Android Setup)
+title: 점검 환경 구축 - Android
 description: 모바일 진단 - Android 점검 환경 구축 (ADB / Frida / Burp 프록시 / 시스템 CA / APK 추출 / 트러블슈팅)
 keywords: [Android, ADB, Frida, frida-server, Burp Suite, Magisk, CA 인증서, APK, MASVS, MASTG, 모바일 환경 구축, Setup]
 draft: false
 ---
 
-# 점검 환경 구축 - Android (Android Setup)
-
+# 점검 환경 구축 - Android
 > Android 앱 점검에 필요한 기본 환경 (ADB / Frida / Burp 프록시 / 시스템 CA / APK 핸들링) 셋업.
 > 이 페이지를 마치면 점검 대상 앱을 후킹·프록시·정적 분석으로 보낼 준비가 완료된 상태가 된다.
 
@@ -80,7 +79,7 @@ adb version
 adb devices
 # List of devices attached
 # RZ8M82XXXX     device          ← "device" 가 떠야 정상
-# RZ8M82XXXX     unauthorized    ← 단말에서 RSA 키 승인 안 된 상태 (팝업 확인 필요)
+# RZ8M82XXXX     unauthorized    ← 단말에서 RSA 키 승인 안 된 상태
 # RZ8M82XXXX     offline         ← 케이블 / 권한 문제
 ```
 
@@ -105,16 +104,16 @@ adb devices
 **PC 측 — `frida-tools` 설치:**
 
 ```bash
-# 시스템 Python 에 직접 설치 (간단)
+# 시스템 Python 에 직접 설치
 pip3 install --upgrade frida-tools
 
-# 또는 가상환경 사용 (권장 — Python 버전 충돌 회피)
+# 또는 가상환경 사용
 python3 -m venv ~/venv-frida
 source ~/venv-frida/bin/activate
 pip install frida-tools
 
 frida --version
-# 16.x 가 나와야 함 (2025~2026 기준 안정 메이저)
+# 16.x 가 나와야 함
 ```
 
 **단말 측 — `frida-server` 푸시:**
@@ -129,7 +128,7 @@ adb shell getprop ro.product.cpu.abi
 # 결과 예: arm64-v8a    ← 일반적인 실기기
 #         x86_64        ← Android Studio AVD
 
-# 3) frida-server 다운로드 (PC 와 동일 메이저 버전 + 단말 아키텍처)
+# 3) frida-server 다운로드
 # https://github.com/frida/frida/releases/tag/16.5.1
 # 예: frida-server-16.5.1-android-arm64.xz
 xz -d frida-server-16.5.1-android-arm64.xz
@@ -181,8 +180,7 @@ Burp Suite → Settings → Tools → Proxy
 
 단말 브라우저에서 `http://example.com` 접속 → Burp Proxy History 에 요청이 보이면 정상. **이 시점에선 HTTPS 는 아직 인증서 오류로 캡처 불가** — Step 4 에서 해결.
 
-### Step 4. Burp CA 인증서 설치 (User CA → System CA 승격)
-
+### Step 4. Burp CA 인증서 설치
 **왜 시스템 CA 로 승격해야 하는지**: Android 7 (Nougat, API 24) 이후 앱은 기본적으로 **사용자가 추가한 CA 인증서를 신뢰하지 않는다** (Network Security Config 정책). 점검 대상 앱이 기본 설정대로 빌드된 경우, Burp CA 가 "사용자 CA" 슬롯에만 있으면 HTTPS 캡처 실패 — Pinning 여부와 무관하게 SSL handshake 에러.
 
 #### 4-1. Burp CA 추출 + Android 가 요구하는 파일명 변환
@@ -203,8 +201,7 @@ mv cacert.pem 9a5ba575.0
 
 **왜 파일명을 바꿔야 하는지**: Android 시스템 CA 디렉토리 (`/system/etc/security/cacerts/`) 는 **OpenSSL subject hash (8자) + `.0` 형식 파일명만** 인식. 임의 파일명을 두면 인증서가 로드되지 않는다.
 
-#### 4-2. 방법 A — Magisk 모듈 (실무 표준, 권장)
-
+#### 4-2. 방법 A — Magisk 모듈
 ```
 Magisk → Modules 에서 다음 중 하나 설치:
   - MagiskTrustUserCerts    (사용자 CA 슬롯의 모든 인증서를 시스템 CA 로 승격)
@@ -224,8 +221,7 @@ Magisk → Modules 에서 다음 중 하나 설치:
 
 **언제 쓰는지**: Magisk 가 설치된 실기기 / 에뮬레이터. 재부팅 시 자동으로 시스템 CA 로 다시 주입되어 유지보수 부담이 없다.
 
-#### 4-3. 방법 B — tmpfs 마운트로 직접 푸시 (Magisk 없이)
-
+#### 4-3. 방법 B — tmpfs 마운트로 직접 푸시
 ```bash
 adb root                                  # adbd 를 root 로 재기동 (userdebug 빌드만 가능)
 adb push 9a5ba575.0 /sdcard/9a5ba575.0
@@ -258,13 +254,13 @@ chmod 644 /system/etc/security/cacerts/*
 adb shell pm list packages | grep -i <KEYWORD>
 # package:com.target.app
 
-# APK 경로 확인 (split APK 가 있으면 여러 줄)
+# APK 경로 확인
 adb shell pm path com.target.app
 # package:/data/app/~~XYZ==/com.target.app-1/base.apk
 # package:/data/app/~~XYZ==/com.target.app-1/split_config.arm64_v8a.apk
 # package:/data/app/~~XYZ==/com.target.app-1/split_config.xxhdpi.apk
 
-# 모두 pull (split 도 정적 분석 시 필요)
+# 모두 pull
 adb pull /data/app/~~XYZ==/com.target.app-1/base.apk                     ./target-base.apk
 adb pull /data/app/~~XYZ==/com.target.app-1/split_config.arm64_v8a.apk   ./target-arm64.apk
 ```
@@ -278,7 +274,7 @@ adb install target-base.apk
 # split APK 가 있는 경우 — 한 번에 설치해야 매니페스트가 매칭됨
 adb install-multiple target-base.apk target-arm64.apk target-xxhdpi.apk
 
-# 강제 재설치 — 서명이 같으면 -r, 서명 다르면 -d 추가 (다운그레이드 허용)
+# 강제 재설치 — 서명이 같으면 -r, 서명 다르면 -d 추가
 adb install -r -d target-base.apk
 ```
 
@@ -317,8 +313,7 @@ adb shell /data/local/tmp/frida-server --version      # 단말
 
 아키텍처가 어긋난 경우. arm64 단말에 x86_64 바이너리를 푸시했거나 반대. `adb shell getprop ro.product.cpu.abi` 로 다시 확인 후 올바른 바이너리 다운로드.
 
-### Burp 에서 HTTPS 캡처가 여전히 인증서 오류 (브라우저 기준)
-
+### Burp 에서 HTTPS 캡처가 여전히 인증서 오류
 ```
 - /system/etc/security/cacerts/<hash>.0 파일이 실제로 존재하는지 ls 로 확인
 - hash 가 맞는지 (subject_hash_old / subject_hash 두 가지 모두 시도)
@@ -327,12 +322,10 @@ adb shell /data/local/tmp/frida-server --version      # 단말
 - 단말의 시스템 시각이 어긋나 있지 않은지 (인증서 NotBefore/NotAfter)
 ```
 
-### 점검 대상 앱만 HTTPS 캡처 실패 (다른 앱 / 브라우저는 정상)
-
+### 점검 대상 앱만 HTTPS 캡처 실패
 → **앱이 SSL Pinning 을 적용한 경우** — 환경 구축의 영역이 아님. `ssl-pinning-bypass.md` 참조 (Frida 스크립트 / Objection / Smali 패치).
 
-### 앱이 실행 즉시 종료 (`Process exited` / 스플래시 후 강제 종료)
-
+### 앱이 실행 즉시 종료
 → **Root 탐지 또는 Frida 탐지** — `root-detection-bypass.md` / `anti-debug-bypass.md` 참조.
 
 ### `adb devices` 가 `unauthorized` 로 표시
