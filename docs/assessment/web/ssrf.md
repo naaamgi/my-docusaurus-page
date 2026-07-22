@@ -1,12 +1,11 @@
 ---
-sidebar_position: 13
+sidebar_position: 28
 title: SSRF
 description: 웹 진단 - Server-Side Request Forgery 진입점, 응답 판단, 내부망/metadata 접근, 우회 노트
 keywords: [SSRF, Server-Side Request Forgery, Blind SSRF, IMDS, metadata, internal network, OWASP A05]
 draft: false
+toc_max_heading_level: 3
 ---
-
-# 서버 사이드 요청 위조 (SSRF)
 
 ## 점검 목적
 
@@ -25,7 +24,7 @@ draft: false
 
 ## 진단 절차
 
-### Step 1. 진입점 식별
+#### Step 1. 진입점 식별
 
 URL을 직접 입력받거나, URL이 포함된 데이터를 서버가 처리하는 기능을 먼저 본다.
 
@@ -37,7 +36,7 @@ URL을 직접 입력받거나, URL이 포함된 데이터를 서버가 처리하
 - 업로드 후처리: SVG, PDF, Office, XML 내부의 외부 참조
 - 관리자 도구: 서버 상태 체크, URL fetch, 프록시 API, 진단 기능
 
-### Step 2. SSRF 진단 루틴
+#### Step 2. SSRF 진단 루틴
 
 Burp Repeater에서 정상 URL을 baseline으로 잡고 **외부 콜백 → 응답 노출 → 내부 주소 → metadata → 우회** 순서로 좁힌다.
 
@@ -84,7 +83,7 @@ http://169.254.169.254/metadata/instance?api-version=2021-02-01
 | URL scheme이 제한됨 | 필터/allowlist 존재 | redirect, parser mismatch, IP 변형 확인 |
 | 브라우저 User-Agent 확인 | headless browser fetch 가능성 | HTML 렌더링, file/screenshot 영향 확인 |
 
-### Step 3. 컨텍스트별 빠른 선택
+#### Step 3. 컨텍스트별 빠른 선택
 
 입력값이 어떤 fetcher에 들어가는지 먼저 가정하고 payload를 고른다.
 
@@ -98,7 +97,7 @@ http://169.254.169.254/metadata/instance?api-version=2021-02-01
 | Redirect follow | attacker URL → `Location: http://127.0.0.1/` | 서버가 redirect를 따라가는지 |
 | Async fetch | unique marker URL | 즉시 응답 이후 콜백이 늦게 오는지 |
 
-### Step 4. 내부 서비스 식별
+#### Step 4. 내부 서비스 식별
 
 응답 본문이 보이면 내용으로, Blind면 status/length/time으로 구분한다.
 
@@ -116,7 +115,7 @@ http://169.254.169.254/metadata/instance?api-version=2021-02-01
 
 ## 페이로드 노트
 
-### 외부 콜백 / fetch 라이브러리 식별
+### 1. 외부 콜백 / fetch 라이브러리 식별
 
 가장 먼저 서버가 실제로 외부 요청을 보내는지 확인한다.
 
@@ -139,7 +138,7 @@ redirect follow 여부
 
 `python-requests`, `Java/`, `Go-http-client`, `curl`, `HeadlessChrome` 같은 User-Agent가 보이면 다음 payload 선택이 쉬워진다.
 
-### In-band 프록시 / 미리보기
+### 2. In-band 프록시 / 미리보기
 
 서버가 가져온 응답을 그대로 돌려주는 기능은 바로 내부로 확장한다.
 
@@ -156,7 +155,7 @@ Host: <TARGET>
 
 외부 HTML이 그대로 나오면 fetch 자체는 확정이다. 내부 URL에서 HTML/JSON/에러 문자열이 달라지는지 본다.
 
-### Localhost / 사설 IP
+### 3. Localhost / 사설 IP
 
 ```text
 http://127.0.0.1/
@@ -171,7 +170,7 @@ http://192.168.0.1/
 
 응답 본문이 없으면 같은 포트에 대해 status, content-length, timeout을 비교한다. 열린 포트는 빠른 실패나 다른 에러를 주고, 닫힌 포트는 timeout으로 떨어지는 경우가 많다.
 
-### AWS Metadata
+### 4. AWS Metadata
 
 IMDSv1은 GET만으로 조회된다.
 
@@ -205,7 +204,7 @@ X-aws-ec2-metadata-token-ttl-seconds: 21600
 
 단순 GET fetcher라면 IMDSv2 token 발급은 막히는 경우가 많다.
 
-### GCP / Azure Metadata
+### 5. GCP / Azure Metadata
 
 GCP/Azure는 metadata header가 필요하다. SSRF 진입점에서 header를 제어할 수 있는지 먼저 본다.
 
@@ -221,7 +220,7 @@ Metadata: true
 
 header 제어가 없으면 단순 URL fetch로는 토큰 조회가 안 될 수 있다. 그래도 인스턴스 정보 endpoint가 노출되는지 확인한다.
 
-### URL Parser / Allowlist 우회
+### 6. URL Parser / Allowlist 우회
 
 필터가 보이면 URL parser가 어느 기준으로 host를 보는지 흔든다.
 
@@ -241,7 +240,7 @@ http://[::ffff:127.0.0.1]/
 
 `@` 앞은 userinfo, 뒤가 실제 host다. 검증 로직과 fetch 라이브러리가 서로 다른 parser를 쓰면 우회가 생긴다.
 
-### Redirect 우회
+### 7. Redirect 우회
 
 검증은 최초 URL만 보고 fetcher가 redirect를 따라가면 내부 URL로 넘어갈 수 있다.
 
@@ -258,7 +257,7 @@ http://attacker.example/redirect-to-metadata
 
 확인은 최종 응답이 metadata/internal 응답으로 바뀌는지, 또는 Collaborator 로그에서 2차 요청이 발생하는지 본다.
 
-### file / gopher / dict Scheme
+### 8. file / gopher / dict Scheme
 
 라이브러리가 HTTP 외 scheme을 처리할 때만 의미가 있다.
 
@@ -274,7 +273,7 @@ gopher://127.0.0.1:6379/_INFO%0d%0a
 
 ---
 
-## 필터 / 우회 매트릭스
+## 우회 매트릭스
 
 | 필터 증상 | 우회 방향 | 예시 |
 | :--- | :--- | :--- |
@@ -331,7 +330,7 @@ gopher://127.0.0.1:6379/_INFO%0d%0a
 
 ### Cloud Credential 사용 확인
 
-AWS metadata credential이 나오면 role 권한을 바로 확인한다.
+AWS metadata credential이 나오면 승인 범위 안에서 caller identity부터 확인한다.
 
 ```bash
 AWS_ACCESS_KEY_ID=<AccessKeyId> \
@@ -392,9 +391,14 @@ Async 경로는 즉시 응답이 같아도 취약할 수 있다. unique marker�
 
 ## 참고자료
 
+### 공식 및 테스트 가이드
+
 - [OWASP Server Side Request Forgery](https://owasp.org/www-community/attacks/Server_Side_Request_Forgery)
 - [OWASP SSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)
 - [PortSwigger - Server-side request forgery](https://portswigger.net/web-security/ssrf)
+- [AWS - Use IMDSv2](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-IMDS-existing-instances.html)
+
+### 커뮤니티 참고 / 도구
+
 - [PayloadsAllTheThings - SSRF](https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Server%20Side%20Request%20Forgery)
 - [HackTricks - SSRF](https://book.hacktricks.xyz/pentesting-web/ssrf-server-side-request-forgery)
-- [AWS - Use IMDSv2](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-IMDS-existing-instances.html)

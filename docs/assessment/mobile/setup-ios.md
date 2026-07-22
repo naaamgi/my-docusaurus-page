@@ -4,139 +4,156 @@ title: 점검 환경 구축 - iOS
 description: 모바일 진단 - iOS 점검 환경 구축 (탈옥 / Sileo / Frida / Burp 프로파일+CA 신뢰 / IPA 추출 / 트러블슈팅)
 keywords: [iOS, Jailbreak, palera1n, Dopamine, unc0ver, Sileo, Frida, Burp Suite, IPA, frida-ios-dump, MASVS, MASTG, 모바일 환경 구축]
 draft: false
+toc_max_heading_level: 3
 ---
 
-# 점검 환경 구축 - iOS
-> iOS 앱 점검에 필요한 기본 환경 (탈옥 / Sileo / Frida / Burp 프로파일·CA 신뢰 / IPA 추출) 셋업.
-> Android 와 달리 단말 / iOS 버전 / 탈옥 도구 매칭이 까다로워, **단말 + iOS 버전을 먼저 정하고 거기 맞는 탈옥 도구를 고르는 흐름**.
+> iOS는 비탈옥 단말의 프록시 기준선과 탈옥 단말의 심화 분석 환경을 분리해 준비한다. 탈옥 도구는 문서의 고정 표를 믿지 않고 단말 SoC와 정확한 iOS 버전을 공식 호환표에 대조한다.
 
-## 점검 환경 개요
+## 환경 선택
 
-| 항목 | 내용 |
-| :--- | :--- |
-| **분류** | OWASP MASVS-RESILIENCE / MASTG-TEST 환경 셋업 (점검 전제) |
-| **대상 OS** | iOS 17 표준 / iOS 15 ~ 17 호환 (단말+탈옥도구 매칭 표 참조) |
-| **단말 요건** | 탈옥 가능 실기기 (시뮬레이터로는 동적 분석 불가) — ⚠️ 회사 정책 시 별도 가이드 필요 |
-| **예상 소요** | 2 ~ 4 시간 (탈옥 단계 포함, 최초 1회) |
-| **핵심 도구** | palera1n / Dopamine, Sileo, Frida, Burp Suite, frida-ios-dump |
+| 환경 | 먼저 할 수 있는 것 | 제한·확인할 것 | 권장 사용 |
+| :--- | :--- | :--- | :--- |
+| **비탈옥 실기기** | 사용자 CA, Burp 프록시, 앱 기능과 일반 통신 기준선 | 다른 앱 컨테이너, App Store 앱 후킹, 복호화 추출 제한 | 고객 환경 기준선 |
+| **탈옥 실기기** | Frida, 앱 컨테이너, 복호화 추출, 보호기법 분석 | 단말·iOS·탈옥 도구 호환성, 탐지와 안정성 | 심화 동적 분석 |
+| **Simulator** | 개발 빌드의 빠른 반복, 기본 정적·동적 관찰 | 실기기 Keychain, Data Protection, 코드서명, 탈옥 탐지와 차이 | 학습과 개발 빌드 보조 |
+
+탈옥은 모든 모바일 점검의 시작 조건이 아니다. 먼저 비탈옥 단말에서 Safari와 앱의 동작을 비교하고, 컨테이너 접근·Frida·복호화 IPA처럼 탈옥이 필요한 작업에서 심화 환경으로 전환한다.
 
 ---
 
-## 환경 구축 목적
+## 구축 목표
 
-iOS 앱 점검은 (1) 탈옥된 실기기, (2) 패키지 매니저 (Sileo) + Frida, (3) Burp 프로파일 + CA 신뢰가 동시에 갖춰져야 가능. 시뮬레이터는 ARM 바이너리 실행이 안 되고 (Apple Silicon 일부 예외) 키체인·Data Protection·코드사이닝 등 보안 메커니즘 검증이 불가능해, **점검은 반드시 실기기 + 탈옥** 환경에서 진행한다.
+다음 결과를 각각 확인한다.
+
+1. USB 페어링과 단말 식별이 정상이다.
+2. 비탈옥 상태에서도 Safari HTTP/HTTPS가 Burp에 보인다.
+3. 탈옥 또는 debuggable 환경에서는 `frida-ps -U`가 성공한다.
+4. 고객 제공 IPA 또는 승인된 추출 경로를 확보한다.
 
 > **다른 페이지와 영역 분리**
-> - 탈옥 탐지 우회 (Liberty Lite / Shadow / Frida) → `jailbreak-detection-bypass.md`
-> - SSL Pinning 우회 (Frida / SSL Kill Switch / Objection) → `ssl-pinning-bypass.md`
-> - Frida 후킹 스크립트 모음 → `frida-scripts.md`
-> - IPA 디컴파일 / class-dump / Hopper → `static-analysis.md`
-> - Android 환경 구축 → `setup-android.md`
+> - 탈옥 탐지 대응 → [탈옥 탐지 우회](./jailbreak-detection-bypass.md)
+> - SSL Pinning 대응 → [SSL Pinning 우회](./ssl-pinning-bypass.md)
+> - 공용 후킹 패턴 → [Frida 후킹 스크립트](./frida-scripts.md)
+> - IPA 구조와 코드 탐색 → [정적 분석](./static-analysis.md)
+> - Android 환경 → [Android 환경 구축](./setup-android.md)
 
 ---
 
 ## 사전 조건
 
 ### PC 측 준비
-- macOS 권장 (Xcode + libimobiledevice 등 iOS 도구 호환성). Linux 도 가능하나 Apple ID / 코드사이닝 작업은 macOS 필요.
-- Python 3.10 이상
-- `libimobiledevice` (USB 통신) — `brew install libimobiledevice ideviceinstaller`
-- USB-C / Lightning 케이블
+
+- Burp와 Frida CLI는 Windows, macOS, Linux에서 사용 가능
+- 탈옥 도구, Xcode, 코드서명과 개발 빌드 분석은 macOS가 가장 수월함
+- 최신 Python 3과 격리된 가상환경
+- macOS/Linux에서는 `libimobiledevice`, 필요한 경우 `usbmuxd`와 `iproxy`
+- 데이터 전송과 DFU를 지원하는 케이블. 케이블 종류에 따라 DFU 인식 차이가 날 수 있음
 
 ### 단말 측 준비
 
-**단말 ↔ iOS 버전 ↔ 탈옥 도구 매칭표 (2026-05 기준):**
+탈옥을 선택하기 전에 아래 값을 기록한다.
 
-| 단말 (SoC) | iOS 버전 | 권장 탈옥 도구 | 비고 |
-| :--- | :--- | :--- | :--- |
-| iPhone 6s ~ X (A9~A11) | iOS 15 / 16 / 17 | **palera1n** (rootless / rootful) | checkm8 기반, 매 부팅마다 재탈옥 |
-| iPhone XS ~ 14 (A12~A15) + arm64e | iOS 15 / 16 (~16.6.1) | **Dopamine** | semi-untethered, 안정적 |
-| iPhone XS ~ 14 (A12~A15) | iOS 15 / 16 / 17 | **palera1n (rootless mode)** | 일부 버전 제한 |
-| iPhone 15 / 16 (A16+) + iOS 17/18 | 제한적 | (대부분 미지원) | 점검용 단말로 부적합 |
+```text
+기기 모델:
+SoC:
+iOS 정확한 버전:
+탈옥 도구와 릴리스:
+rootless / rootful:
+패스코드·DFU 제약:
+원복 방법:
+```
 
-⚠️ **iOS 17 의 경우**: 일부 보안 기법 (예: 옛 SSL Kill Switch 2) 가 구조 변경으로 동작하지 않음. **Frida 기반 우회 스크립트가 가장 안전**. 탈옥 환경 구축이 어려우면 **iPhone X / iOS 16.6.x + Dopamine** 조합이 점검 표준 단말로 안정적.
-
-⚠️ **회사 정책**: 일부 회사는 사내 Apple ID / MDM 정책으로 탈옥 단말 관리. 미적용 시 별도 점검 단말 발급 또는 회사 가이드 필요.
+- palera1n은 checkm8 대상인 A8~A11 계열의 공식 호환 장치만 고려한다. A12 이상을 palera1n 대상으로 분류하지 않는다.
+- Dopamine 지원 범위는 stable과 beta가 달라질 수 있으므로 공식 README와 해당 릴리스 노트를 모두 확인한다.
+- A11 장치는 iOS 버전에 따라 패스코드 비활성화나 초기화 조건이 생길 수 있다. 개인 단말이 아니라 초기화 가능한 점검 전용 단말을 사용한다.
+- MDM·사내 Apple ID 정책과 충돌하면 임의로 우회하지 않고 별도 점검 단말이나 고객 제공 환경을 사용한다.
 
 ---
 
 ## 구축 절차
 
-### Step 1. 단말 탈옥
+경로를 먼저 고른다.
 
-**Dopamine (iOS 15 ~ 16.6.1, A12 ~ A15):**
+| 목적 | 진행 순서 |
+| :--- | :--- |
+| 비탈옥 기준선 | Step 1 → Step 5 |
+| 탈옥 심화 분석 | Step 1 → Step 2 → Step 3 → Step 4 → Step 5 → Step 6 |
+| 고객 제공 debuggable build | Step 1 → Step 4의 비탈옥 Frida 방식 → Step 5 |
 
-```
-1) Sideloadly 또는 AltStore 로 Dopamine.ipa 사이드로드
-   - https://github.com/opa334/Dopamine/releases
-2) 단말 → 설정 → 일반 → VPN 및 기기 관리 → 개발자 앱 → Dopamine 신뢰
-3) Dopamine 앱 실행 → "Jailbreak" 탭
-4) "Install" 후 단말 자동 재부팅
-5) 재부팅 후 Dopamine 앱 실행 → "Jailbreak" 다시 탭 (semi-untethered: 부팅마다 1회)
-```
+#### Step 1. 단말 식별과 USB 기준선
 
-**palera1n (iOS 15 ~ 17, checkm8 기반 — A11 이하 또는 A12~ rootless):**
+macOS/Linux에서 `libimobiledevice`를 사용할 수 있으면 페어링 상태와 정확한 버전을 먼저 저장한다.
 
 ```bash
-# macOS 예시
-brew install --cask palera1n
-
-# 단말을 DFU 모드로 진입
-# iPhone 8/X: 전원 + 음량- 동시 → 화면 꺼지면 음량- 만 유지
-
-palera1n -l            # rootless
-# 또는
-palera1n -f            # rootful (탈옥 후 더 강한 권한)
-
-# 진행 도중 패스코드 비활성 / 단말 초기화 요구할 수 있음
-# 점검 단말은 절대 개인 데이터를 두지 않는 가정
+idevice_id -l
+ideviceinfo -k ProductType
+ideviceinfo -k ProductVersion
 ```
 
-**왜 탈옥이 필요한지**: 탈옥 없는 iOS 는 (1) 임의 바이너리 (`frida-server`) 실행 불가, (2) 시스템 디렉토리 / 다른 앱 컨테이너 접근 불가, (3) 시스템 CA 변경 불가. 탈옥 없이는 정적 분석 (IPA 추출 일부) 정도만 가능.
+Windows에서는 Apple Devices 또는 iTunes가 단말을 정상 인식하고 신뢰 팝업이 승인됐는지 먼저 확인한다. 이 단계가 실패하면 Frida, IPA 전송, SSH 포워딩을 진행하지 않는다.
 
-### Step 2. Sileo (패키지 매니저) 확인 + 저장소 추가
+#### Step 2. 필요한 경우 탈옥 환경 준비
 
-탈옥 후 단말에 Sileo (또는 Cydia) 가 설치된다. 점검에 필요한 도구는 모두 Sileo 저장소에서 설치.
+**Dopamine 계열:**
 
+```text
+1. 공식 README와 릴리스에서 SoC·iOS 지원 여부 확인
+2. 릴리스가 stable인지 beta인지 기록
+3. 공식 배포 경로에서 IPA 확보
+4. 지원되는 사이드로드 방식과 만료 조건 확인
+5. 탈옥 후 rootless/rootful과 패키지 매니저 상태 기록
 ```
+
+**palera1n:**
+
+```bash
+# 공식 설치 후 현재 옵션 확인
+palera1n --version
+palera1n --help
+```
+
+DFU 진입과 rootless/rootful 옵션은 장치와 릴리스에 따라 달라질 수 있으므로 공식 설치 문서를 그대로 따른다. 특히 A11의 패스코드·초기화 조건을 확인하기 전에는 진행하지 않는다.
+
+**탈옥이 필요한 시점**: App Store 앱의 광범위한 런타임 후킹, 다른 앱 컨테이너 접근, 복호화 IPA 추출처럼 stock 환경의 sandbox와 코드서명 제한을 넘어야 할 때다. Burp CA 프로파일 설치와 Safari 프록시 기준선은 탈옥 없이 가능하다.
+
+#### Step 3. 패키지 매니저와 설치 출처 확인
+
+탈옥 방식에 따라 Sileo, Zebra 등 패키지 매니저와 rootless 경로가 달라진다. 저장소를 한꺼번에 추가하지 말고 필요한 패키지의 공식 출처부터 확인한다.
+
+```text
 Sileo → Sources → Edit → Add Repository
 
   - https://build.frida.re                    (Frida 공식)
-  - https://repo.chariz.com                   (Chariz, 다양한 Tweak)
-  - https://havoc.app                         (Havoc, 인기 저장소)
-  - https://repo.misty.moe                    (Liberty Lite 등)
-  - https://opa334.github.io                  (Dopamine 메인테이너)
 ```
 
-**왜 이 저장소들인지**:
-- `build.frida.re` → `frida` / `frida-server` 패키지 (필수)
-- `chariz` / `havoc` → 우회용 Tweak (`Liberty Lite`, `A-Bypass`)
-- `misty.moe` → SSL Kill Switch 류 (iOS 16 이하만 안정)
+커뮤니티 tweak 저장소는 보호기법 문서에서 필요한 경우에만 추가한다. 오래된 tweak와 현재 rootless 환경의 호환성을 이름만 보고 판단하지 않는다.
 
-### Step 3. Frida 설치
+#### Step 4. Frida 설치와 연결
 
 **단말 측:**
 
-```
+```text
 Sileo → Search → "frida" 검색 → "Frida" (build.frida.re 의 패키지) 설치
 설치 후 SSH 또는 NewTerm 으로 단말 쉘 진입 후 확인:
 
-  $ frida-server --version
-  16.5.1
+  frida-server --version
 ```
 
 **PC 측 — `frida-tools` 설치:**
 
-```bash
-pip3 install --upgrade frida-tools
+```powershell
+py -m venv .venv-frida
+.\.venv-frida\Scripts\Activate.ps1
+python -m pip install --upgrade frida-tools
 frida --version
-# 단말의 frida-server 와 동일 메이저 버전이어야 함
 ```
+
+macOS/Linux도 가상환경 안에서 `python -m pip install --upgrade frida-tools`를 사용한다. PC와 단말은 가능한 한 같은 Frida 릴리스로 맞춘다.
 
 **검증:**
 
 ```bash
-# 단말과 동일 Wi-Fi 또는 USB 연결
+# USB 연결
 frida-ps -U
 # PID    Name
 # -----  ----------------------------
@@ -145,58 +162,62 @@ frida-ps -U
 # ...
 ```
 
-**왜 USB 우선인지**: Wi-Fi 연결은 iOS 의 백그라운드 절전과 충돌 가능. **USB + `iproxy 27042 27042` (libimobiledevice)** 조합이 가장 안정적이며, 회의실 / 출장 환경에서도 동일하게 동작.
+현재 Frida는 USB 연결에 `-U`를 직접 사용한다. `iproxy 27042 27042`를 기본 절차로 먼저 실행하지 않는다. USB 자동 탐지가 실패했거나 별도 TCP 연결을 의도한 경우에만 포워딩을 보조 수단으로 검토한다.
 
-```bash
-iproxy 27042 27042         # USB 로 Frida 포트 포워딩
-frida-ps -H 127.0.0.1
-```
+Frida 공식 문서는 탈옥하지 않은 단말에서도 debuggable 앱과 Frida Gadget을 사용하는 방식을 제공한다. 고객이 제공한 개발 빌드라면 탈옥부터 시도하지 말고 해당 경로를 우선 확인한다.
 
-### Step 4. Burp 프로파일 + CA 인증서 신뢰
+#### Step 5. Burp 프로파일과 CA 신뢰
 
-**4-1. Burp 측 — Wi-Fi 인터페이스 바인딩:**
+**5-1. Burp 측 — Wi-Fi 인터페이스 바인딩:**
 
-```
+```text
 Burp → Settings → Tools → Proxy → Proxy listeners → Add
   Bind to port:    8080
   Bind to address: All interfaces
 ```
 
-**4-2. 단말 측 — 매뉴얼 프록시:**
+**5-2. 단말 측 — 매뉴얼 프록시:**
 
-```
+```text
 설정 → Wi-Fi → 연결된 네트워크 (i 아이콘) → HTTP 프록시 → 수동 구성
   서버:  <PC LAN IP>
   포트:  8080
 ```
 
-**4-3. Burp CA 다운로드 + 프로파일 설치:**
+**5-3. Burp CA 다운로드 + 프로파일 설치:**
 
-```
+```text
 1) 단말 Safari 에서 http://burp 접속 (프록시 설정된 상태)
 2) 우상단 "CA Certificate" 클릭 → cacert.cer 다운로드
 3) 단말 → 설정 → 일반 → VPN 및 기기 관리 → 다운로드된 프로파일
    → "PortSwigger CA" 선택 → 설치 → 패스코드 입력 → 동의
 ```
 
-**4-4. 인증서 완전 신뢰 (필수 — 누락하면 HTTPS 캡처 실패)**
+**5-4. 인증서 완전 신뢰 (필수 — 누락하면 HTTPS 캡처 실패)**
 
 iOS 10.3+ 이후 사용자 설치 CA 는 **명시적으로 "완전 신뢰" 토글을 켜야** SSL 검증에 사용된다.
 
-```
+```text
 설정 → 일반 → 정보 → 인증서 신뢰 설정
   → "PortSwigger CA" 토글 ON
 ```
 
 **검증**: 단말 Safari 에서 `https://example.com` 접속 시 Burp 에서 평문 캡처 + 인증서 경고 없음.
 
-> **점검 대상 앱은 여전히 캡처 실패할 수 있음** — SSL Pinning 적용 시. 해당 케이스는 `ssl-pinning-bypass.md` 의 영역.
+이 절차는 탈옥하지 않은 iOS에서도 가능하다. Safari 기준선은 정상인데 점검 대상 앱만 실패하면 [SSL Pinning 우회](./ssl-pinning-bypass.md)에서 앱의 trust 처리와 Pinning을 확인한다.
 
-### Step 5. IPA 추출
-**왜 IPA 추출이 필요한지**: App Store 배포 IPA 는 FairPlay 로 암호화되어 있어, **탈옥 단말에서 메모리 덤프**를 통해 복호화된 IPA 를 얻어야 정적 분석 (`static-analysis.md`) 이 가능하다.
+#### Step 6. 분석 대상 IPA 확보
+
+우선순위는 다음과 같다.
+
+1. 고객이 제공한 승인된 테스트 IPA, dSYM, 앱 버전 정보
+2. 개발팀이 제공한 debuggable 또는 테스트 빌드
+3. 승인된 계정으로 설치한 App Store 앱을 탈옥 단말에서 복호화 추출
+
+App Store 실행 파일은 FairPlay 보호 상태일 수 있으므로 단순 다운로드 파일을 바로 디스어셈블할 수 있다고 가정하지 않는다. 고객 제공 빌드와 App Store 배포본의 서명·설정 차이도 함께 기록한다.
 
 ```bash
-# PC 측 — frida-ios-dump 클론
+# 커뮤니티 도구 예시 — 저장소 상태와 현재 Frida/Python 호환성 확인
 git clone https://github.com/AloneMonkey/frida-ios-dump
 cd frida-ios-dump
 pip3 install -r requirements.txt
@@ -215,45 +236,41 @@ frida-ps -Uai | grep -i <KEYWORD>
 # 결과 — target.ipa 가 PC 에 생성됨
 ```
 
-**언제 쓰는지**: App Store 배포 앱 점검. 사내 빌드 / TestFlight IPA 는 이미 복호화 상태이므로 **`ipatool` 로 직접 다운로드** 가능.
-
-```bash
-brew install ipatool
-ipatool auth login
-ipatool download -b com.target.app -o ./target.ipa
-```
+`frida-ios-dump`는 커뮤니티 도구다. 실패하면 동일 명령을 반복하기보다 현재 저장소의 지원 상태, Python 의존성, SSH 연결, rootless 경로와 Frida 호환성을 확인한다. TestFlight 또는 `ipatool` 다운로드 결과도 자동으로 복호화 분석본이라고 단정하지 않는다.
 
 ---
 
-## 검증 — 구축 완료 시그널
+## 구축 검증
 
-다음 4 가지가 동시에 정상이면 환경 구축 완료:
+선택한 환경에 해당하는 항목이 정상이면 구축 완료다.
 
-- [ ] 단말 탈옥 상태 유지 (Sileo 정상 실행)
-- [ ] `frida-ps -U` 또는 `frida-ps -H 127.0.0.1` 가 단말 프로세스 목록 출력
+- [ ] USB 페어링과 단말 모델·iOS 버전 기록 완료
 - [ ] 단말 Safari 에서 `https://example.com` 접속 시 Burp 에서 평문 캡처 + 인증서 경고 없음
-- [ ] 점검 대상 앱이 정상 실행 (단, Pinning / 탈옥 탐지로 차단되면 후속 페이지에서 우회 적용)
+- [ ] 탈옥·debuggable 환경이면 `frida-ps -U`가 프로세스 목록 출력
+- [ ] 고객 제공 IPA 또는 승인된 추출 경로와 앱 버전 확인
+
+앱만 통신이나 실행에 실패하면 환경 구축 실패와 보호기법 동작을 분리해서 기록한다.
 
 ---
 
 ## 트러블슈팅
 
-### 탈옥 앱 (Dopamine) 이 7일 후 만료됨
+### Dopamine 7일 만료
 
-```
+```text
 - 무료 Apple ID 사이드로드는 7일 만료
 - 해결: 유료 개발자 계정 사이드로드 (1년) 또는 매주 재사이드로드
 - 또는 TrollStore (영구 사이드로드, iOS 14~16.6.x 일부) 사용
 ```
 
-### `frida-ps -U` 가 단말을 못 찾음
+### `frida-ps -U` 단말 미인식
 
 ```bash
 # USB 연결 + libimobiledevice 동작 확인
 idevice_id -l
 # UUID 가 출력되어야 함
 
-# 단말 frida-server 가 동작 중인지
+# 단말 Frida launch daemon 상태 확인
 launchctl list | grep frida
 # re.frida.server   ...
 
@@ -262,56 +279,64 @@ launchctl unload /Library/LaunchDaemons/re.frida.server.plist
 launchctl load   /Library/LaunchDaemons/re.frida.server.plist
 ```
 
-### Burp HTTPS 캡처 실패 — Safari 에서 인증서 오류
+### Safari HTTPS 인증서 오류
 
-```
+```text
 - 설정 → 일반 → 정보 → 인증서 신뢰 설정 에서 "PortSwigger CA" 토글이 OFF
-  → 위 4-4 단계 수행
+  → 위 5-4 단계 수행
 - 프로파일 설치는 했지만 신뢰 토글을 안 켰을 가능성 (가장 흔한 실수)
 ```
 
-### 점검 대상 앱만 HTTPS 캡처 실패
-→ **앱이 SSL Pinning 적용** — `ssl-pinning-bypass.md` 참조 (Frida 스크립트가 iOS 17 에서도 가장 안정적).
+### 앱 HTTPS 캡처 실패
 
-### 앱이 실행 즉시 종료
+Safari는 정상인데 앱만 실패하는지 먼저 확인한다. 이후 [SSL Pinning 우회](./ssl-pinning-bypass.md)에서 ATS, 사용자 CA 비신뢰, Pinning을 구분한다.
 
-→ **탈옥 탐지** — `jailbreak-detection-bypass.md` 참조 (Liberty Lite / A-Bypass / Frida).
+### 앱 즉시 종료
 
-### `frida-ios-dump` 가 SSH 연결 실패
+비탈옥 단말에서는 정상인지 비교한 뒤 [탈옥 탐지 우회](./jailbreak-detection-bypass.md)와 [디버거/Frida 탐지 우회](./anti-debug-bypass.md)로 이동한다.
+
+### `frida-ios-dump` SSH 연결 실패
 
 ```bash
 # SSH 가 단말에 설치되어 있어야 함
 # Sileo 에서 "OpenSSH" 또는 "Dropbear" 설치
-# 단말 SSH 기본 패스워드: alpine
 # 포트 포워딩
 iproxy 2222 22
 ssh root@127.0.0.1 -p 2222
 ```
 
-### iOS 17 에서 SSL Kill Switch 2 가 동작 안 함
+SSH 계정과 초기 암호는 jailbreak/bootstrap 구성에 따라 다를 수 있다. 공식 문서에서 확인하고, 기본 암호가 설정된 환경이면 점검망에 연결하기 전에 변경한다.
 
-→ iOS 17 의 BoringSSL / 코드사인 변경으로 옛 트윅이 부분 동작. **Frida 스크립트** 로 전환. `ssl-pinning-bypass.md` 의 iOS 섹션 참조.
+### 구형 SSL tweak 미동작
+
+현재 iOS, rootless 환경, 앱의 TLS 라이브러리와 tweak 지원 범위를 확인한다. 특정 tweak 또는 Frida 스크립트가 항상 더 안정적이라고 단정하지 않고, 앱이 사용하는 검증 지점을 식별해 [SSL Pinning 우회](./ssl-pinning-bypass.md)의 다음 방법을 선택한다.
 
 ---
 
-## 다른 페이지로 위임
+## 다음 문서
 
-- **SSL Pinning 우회** → `ssl-pinning-bypass.md`
-- **탈옥 탐지 우회** → `jailbreak-detection-bypass.md`
-- **Frida 후킹 스크립트 모음** → `frida-scripts.md`
-- **정적 분석 (class-dump / Hopper / Ghidra)** → `static-analysis.md`
-- **Android 환경 구축** → `setup-android.md`
-- **데이터 저장소 점검** (Keychain / NSUserDefaults / plist) → `data-storage-ios.md`
+- [정적 분석](./static-analysis.md)
+- [Frida 후킹 스크립트](./frida-scripts.md)
+- [SSL Pinning 우회](./ssl-pinning-bypass.md)
+- [탈옥 탐지 우회](./jailbreak-detection-bypass.md)
+- [iOS 데이터 저장소](./data-storage-ios.md)
+- [Android 환경 구축](./setup-android.md)
 
 ---
 
 ## 참고자료
 
+### 공식 및 테스트 가이드
+
 - [OWASP MASVS](https://mas.owasp.org/MASVS/)
 - [OWASP MASTG - iOS Basic Security Testing Setup](https://mas.owasp.org/MASTG/0x06b-Basic-Security-Testing/)
 - [Frida 공식 문서 - iOS](https://frida.re/docs/ios/)
 - [Dopamine (Jailbreak)](https://github.com/opa334/Dopamine)
-- [palera1n (Jailbreak)](https://palera.in/)
+- [palera1n 호환표](https://docs.palera.in/docs/reference/compatibility-chart/)
+- [Apple - 수동 설치 인증서 신뢰](https://support.apple.com/102390)
+
+### 커뮤니티 참고 / 도구
+
 - [frida-ios-dump](https://github.com/AloneMonkey/frida-ios-dump)
 - [ipatool](https://github.com/majd/ipatool)
 - [PortSwigger - Installing Burp's CA certificate in an iOS device](https://portswigger.net/support/installing-burp-suites-ca-certificate-in-an-ios-device)

@@ -1,250 +1,322 @@
 ---
-sidebar_position: 20
+sidebar_position: 18
 title: CSRF
-description: 웹 진단 - CSRF 점검 절차, 토큰/Referer/Origin 검증 우회, GET 변경, SameSite, 판정 기준
-keywords: [CSRF, XSRF, Cross-Site Request Forgery, SameSite, Anti-CSRF Token, Synchronizer Token, OWASP A01]
+description: 웹 진단 - CSRF 토큰, Origin·Referer, SameSite, GET 상태 변경, JSON 요청 점검 절차와 판정 기준
+keywords: [CSRF, XSRF, Cross-Site Request Forgery, SameSite, Anti-CSRF Token, Origin, Referer, OWASP A01]
 draft: false
+toc_max_heading_level: 3
 ---
 
-# 크로스 사이트 요청 위조
-> 인증된 사용자가 공격자 사이트 방문 시, 자신의 의도와 무관하게 대상 사이트로 **변경 요청** (이체·비밀번호 변경·권한 부여 등) 이 자동 전송되는 취약점.
-> 관리자 대상 + 임팩트 큰 액션이면 단일 결함만으로 시스템 전체 침해까지 가능.
-
-## 점검 개요
-
-| 항목 | 내용 |
-| :--- | :--- |
-| **분류** | OWASP A01:2025 - Broken Access Control (CSRF는 권한 검증 카테고리에 포함, 별도 항목 아님) / KISA 권한 관리 |
-| **CWE** | [CWE-352: Cross-Site Request Forgery](https://cwe.mitre.org/data/definitions/352.html) |
-| **영향도** | 🔴 (관리자 대상 + 임팩트 큰 액션) / 🟡 (일반 사용자 + 사소한 액션) |
-| **점검 난이도** | 하 (PoC HTML 작성 자체는 단순) |
-| **예상 점검 시간** | 30분 ~ 2시간 (변경 액션 수에 비례) |
-
----
+> 로그인한 사용자가 다른 사이트를 열었을 때, 사용자 모르게 대상 서비스의 변경 요청이 실행되는지 확인한다.
 
 ## 점검 목적
 
-상태를 변경하는 모든 요청 (POST/PUT/DELETE/PATCH, 그리고 잘못 설계된 GET) 이 **공격자가 유도한 크로스사이트 요청** 으로 트리거되지 않도록 보호되어 있는지 확인한다. Anti-CSRF 토큰·SameSite 쿠키·Origin/Referer 검증 중 어떤 메커니즘이 적용되어 있고, 우회 가능한지 점검.
+공격자 페이지가 사용자의 브라우저를 이용해 프로필 변경, 게시글 작성, 설정 변경 같은 요청을 대신 보낼 수 있는지 확인한다.
 
-> 세션 쿠키 기반 인증 페이지가 주 대상. `Authorization: Bearer ...` 헤더만 사용하고 쿠키 세션을 안 쓰는 SPA/모바일 백엔드는 CSRF 영향이 본질적으로 없음.
+CSRF가 성립하려면 보통 다음 세 조건이 모두 필요하다.
+
+1. 브라우저가 세션 쿠키 같은 인증정보를 요청에 자동으로 넣는다.
+2. 다른 사이트에서 대상 요청과 같은 형태를 만들 수 있다.
+3. 서버가 CSRF 토큰이나 요청 출처를 제대로 확인하지 않는다.
+
+Burp Repeater에서 쿠키를 직접 넣어 요청이 성공하는 것만으로는 CSRF가 아니다. 다른 사이트에서 PoC를 열었을 때 브라우저가 인증정보를 포함해 요청하고, 실제 상태가 바뀌어야 한다.
+
+세션 쿠키 속성은 [세션 관리](./session-management.md), 공격자 Origin을 허용하는 문제는 [CORS](./cors.md)에서 이어간다.
 
 ---
 
 ## 유형 구분
 
-| 유형 | 핵심 |
-| :--- | :--- |
-| **CSRF 토큰 미적용** | Anti-CSRF 토큰 자체가 없음 |
-| **CSRF 토큰 검증 미흡** | 값 존재 여부만 체크 / 빈 값 통과 / 다른 사용자 토큰 통과 |
-| **Referer/Origin 검증 미흡** | Referer 빈 값 통과 / 부분 매칭 우회 |
-| **GET 으로 상태 변경** | 변경 액션이 GET 으로 처리됨 — `<img src>` 한 줄로 트리거 |
-| **SameSite 쿠키 미설정** | `SameSite=None` 또는 미설정 → 크로스사이트 자동 전송 |
-| **JSON CSRF (한정)** | Content-Type 우회 가능한 경우 |
+| 유형 | 특징 | 실무 판단 |
+| :--- | :--- | :--- |
+| **방어 없는 변경 요청** | 세션 쿠키만 있으면 요청이 처리됨 | 다른 사이트의 form·링크로 실제 변경되면 취약 |
+| **CSRF 토큰 검사 미흡** | 토큰 제거·빈 값·잘못된 값이 허용됨 | 공격자가 만들 수 있는 요청으로 우회가 재현되면 취약 |
+| **요청 출처 검사 미흡** | `Origin`·`Referer`가 없거나 일부 문자열만 맞아도 허용됨 | 다른 사이트에서 만든 요청이 통과하면 취약 |
+| **GET 상태 변경** | 링크를 여는 것만으로 데이터나 설정이 바뀜 | 로그인 쿠키가 포함된 외부 이동으로 변경되면 취약 |
+| **SameSite 의존** | 별도 토큰 없이 쿠키의 `SameSite`에만 의존함 | 실제 브라우저에서 쿠키가 전송되는 조건이 있으면 취약 |
+| **요청 형식 검사 편차** | JSON은 막지만 form·`text/plain`·Method Override는 허용함 | 다른 사이트가 만들 수 있는 형식으로 변경되면 취약 |
 
 ---
 
 ## 진단 절차
 
-### Step 1. 변경 액션 매핑
+#### Step 1. 안전한 변경 기능 선택
 
-Burp 시퀀스에서 다음을 모두 수집:
+로그인 후 서버 상태를 바꾸는 요청을 찾는다.
 
-- POST / PUT / DELETE / PATCH 요청 전체
-- **상태 변경하는 GET 요청** — 있으면 안 되지만 체크 (예: `/api/account/delete?id=42`)
-- 인증 쿠키가 자동 전송되는 모든 변경 액션
+- 프로필 표시 이름·알림 설정 변경
+- 테스트 게시글 작성·수정·삭제
+- 배송지·연락처 변경
+- 이메일·비밀번호·MFA 변경
+- 관리자 공지·승인·사용자 상태 변경
 
-### Step 2. CSRF 방어 메커니즘 식별
+먼저 되돌릴 수 있는 테스트 계정과 데이터로 확인한다. 이메일·비밀번호처럼 계정 접근에 영향을 주는 기능은 소유한 테스트 주소와 복구 수단이 있을 때만 사용한다.
 
-각 요청에서 다음 확인:
+#### Step 2. 브라우저가 인증정보를 자동으로 보내는지 확인
 
-- **Anti-CSRF 토큰** — body / 헤더 (`X-CSRF-Token`, `X-XSRF-TOKEN`) / 별도 쿠키
-- **Referer / Origin 헤더 검증** — 헤더 변조 시 응답 변화
-- **SameSite 쿠키 속성** — 세션 쿠키의 `Set-Cookie` 헤더 (세션 관리 페이지 참조)
+CSRF는 사용자가 값을 직접 넣지 않아도 브라우저가 인증정보를 붙이는 경우가 대상이다.
 
-### Step 3. 우회 시도
+| 인증 방식 | 기본 판단 |
+| :--- | :--- |
+| 세션 쿠키 | 주요 점검 대상 |
+| HTTP Basic 인증·클라이언트 인증서 | 브라우저가 자동 사용하면 점검 대상 |
+| JavaScript가 직접 넣는 `Authorization: Bearer` 헤더 | 다른 사이트의 form이 헤더를 넣을 수 없어 일반적인 CSRF 대상이 아님 |
 
-토큰 제거/변조, Referer 제거/변조, GET 변환, JSON Content-Type 우회 (케이스 1~6).
+Bearer 토큰과 세션 쿠키를 함께 쓰는 서비스라면 어떤 값으로 인증되는지 쿠키를 제거해 비교한다.
 
-### Step 4. 다른 origin 트리거 확인
+#### Step 3. 현재 방어 확인
 
-다른 origin (`http://attacker.com/poc.html`) 에서 호스팅된 HTML 이 자동으로 변경 요청을 트리거하는지 실제 브라우저로 확인. Burp Repeater에서 쿠키를 붙여 보낸 요청이 성공하는 것만으로는 CSRF 입증이 아니다.
+정상 변경 요청에서 다음 값을 찾는다.
+
+- body 또는 Header의 CSRF 토큰: `csrf`, `_token`, `X-CSRF-Token`, `X-XSRF-TOKEN`
+- `Origin`·`Referer`를 바꿨을 때 서버 응답 차이
+- 인증 쿠키의 `SameSite=Strict`, `Lax`, `None`
+- 중요 변경 시 현재 비밀번호나 MFA를 다시 요구하는지
+
+#### Step 4. 방어를 한 번에 하나씩 변경
+
+정상 요청을 기준으로 다음 순서로 비교한다.
+
+1. CSRF 토큰 필드 전체 제거
+2. 빈 값과 임의 값 사용
+3. 다른 테스트 계정에서 발급된 토큰 사용
+4. `Origin`·`Referer` 제거 또는 다른 사이트 값 사용
+5. 같은 기능의 GET·form·다른 Content-Type 확인
+
+응답 코드만 보지 말고 후속 조회에서 값이 실제로 바뀌었는지 확인한다.
+
+#### Step 5. 다른 사이트에서 브라우저 PoC 실행
+
+PoC 파일은 대상 서비스와 다른 Origin에서 연다. 예를 들어 대상이 `https://target.example`이면 `http://127.0.0.1:8000`처럼 scheme·host·port 중 하나가 다른 위치를 사용한다.
+
+브라우저 개발자 도구나 Burp에서 다음을 확인한다.
+
+- 요청이 실제 전송됐는지
+- 인증 쿠키가 포함됐는지
+- CORS preflight에서 중단되지 않았는지
+- 응답 코드와 관계없이 서버 상태가 바뀌었는지
+
+### 상황별 빠른 선택
+
+| 현재 요청 | 먼저 할 테스트 |
+| :--- | :--- |
+| form 형식의 `POST` + CSRF 토큰 없음 | 다른 Origin에서 자동 제출 form 실행 |
+| CSRF 토큰이 있음 | 필드 제거·빈 값·임의 값 순서로 비교 |
+| `Origin`·`Referer`만 확인 | 헤더가 없거나 다른 사이트일 때 차단되는지 확인 |
+| GET 요청으로 데이터 변경 | 외부 페이지의 top-level 이동으로 실행 |
+| 인증 쿠키가 `SameSite=None` | 외부 form 요청에 쿠키가 포함되는지 확인 |
+| 인증 쿠키가 `SameSite=Lax` | 상태 변경 GET·Method Override·최근 발급 쿠키 조건 확인 |
+| JSON `PUT`·`DELETE` | preflight 여부를 확인하고 form으로 보낼 대체 요청 탐색 |
+| 로그인 요청 | 공격자 테스트 계정으로 피해자 브라우저가 로그인되는지 확인 |
 
 ---
 
-## 페이로드 / 테스트 케이스
+## 페이로드 노트
 
-### 케이스 1: CSRF 토큰 미적용 — 단순 PoC HTML
+### 1. 토큰 없는 form 요청
 
-**언제 쓰는지**: Step 2에서 어떤 CSRF 방어도 식별되지 않을 때. 가장 단순하고 가장 자주 발견되는 케이스.
+**이럴 때 사용**: 변경 요청이 `POST` form 형식이고 CSRF 토큰이나 출처 검사가 보이지 않는다.
 
-**PoC HTML (다른 도메인에서 호스팅):**
+**바꿀 값**: 테스트 계정에서 되돌릴 수 있는 값만 사용한다.
 
 ```html
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="ko">
 <body>
-  <form id="csrf" action="https://<TARGET>/api/profile/email" method="POST">
-    <input type="hidden" name="email" value="attacker@evil.com">
+  <form id="csrf" action="https://target.example/api/profile" method="POST">
+    <input type="hidden" name="displayName" value="csrf-test">
   </form>
   <script>document.getElementById('csrf').submit();</script>
 </body>
 </html>
 ```
 
-**판정**: 다른 도메인(`http://attacker.com/poc.html`) 에서 페이지를 열었을 때 피해자(로그인 상태) 의 이메일이 `attacker@evil.com` 으로 변경되면 취약. 변경 후 이메일 인증 흐름이 없으면 영향도 더 큼.
+**확인할 것**: 로그인된 브라우저로 외부 페이지를 열었을 때 세션 쿠키가 포함되고, 표시 이름이 실제로 `csrf-test`로 바뀌는지 확인한다.
 
-### 케이스 2: 토큰 제거 / 빈 값 / 다른 사용자 토큰 우회
+브라우저가 쿠키를 보내지 않았거나 서버가 요청을 차단했다면 이 PoC로는 취약하지 않다.
 
-**언제 쓰는지**: CSRF 토큰이 있는 것처럼 보이지만, 검증이 미흡할 가능성을 확인할 때.
+### 2. CSRF 토큰 제거·변조
 
-**시도 단계:**
+**이럴 때 사용**: 정상 요청에 `csrf`, `_token`, `X-CSRF-Token` 같은 값이 있다.
 
-```
-1. 정상 요청: csrf_token=ABC123XYZ      → 200 OK
+**바꿀 값**
 
-2. 토큰 파라미터 자체 제거 (필드 삭제) → 200 이면 취약
-3. 토큰 빈 값: csrf_token=             → 200 이면 취약
-4. 토큰 변조: csrf_token=AAAAAA        → 200 이면 취약 (값 검증 자체 안 함)
-5. 다른 사용자(B) 의 토큰 사용:
-   A 의 세션 쿠키 + B 의 토큰          → 200 이면 사용자별 검증 누락 (취약)
-```
+| 순서 | 요청 | 확인 의도 |
+| :--- | :--- | :--- |
+| 1 | 토큰 필드 전체 제거 | 토큰이 없을 때 검사를 건너뛰는지 |
+| 2 | 토큰을 빈 값으로 전송 | 값 존재 여부만 보는지 |
+| 3 | 임의 문자열로 변경 | 발급된 값인지 검증하는지 |
+| 4 | 사용자 A 세션 + 사용자 B 토큰 | 토큰이 사용자 세션과 연결되는지 |
 
-**판정**: 위 시도 중 하나라도 200 응답이면 토큰 검증 미흡. 특히 5번(다른 사용자 토큰 통과) 은 자주 발견되며, **토큰을 발급하지만 사용자 매칭은 안 함** 패턴.
+**확인할 것**: 요청 성공 메시지보다 값이 실제 변경됐는지 확인한다.
 
-### 케이스 3: Referer / Origin 검증 미흡
+다른 사용자 토큰이 통과한다는 사실만으로 공격이 완성되지는 않는다. 공격자가 자신의 토큰을 읽어 피해자 요청에 넣을 수 있는지, 또는 토큰이 고정·공개되어 있는지까지 확인한다. 토큰을 피해자 브라우저에 전달할 방법이 없다면 방어 약점 후보로 기록한다.
 
-**언제 쓰는지**: CSRF 토큰 없이 Referer/Origin 만으로 방어하는 경우. 모던 환경에서는 Origin 검증이 표준.
+### 3. `Origin`·`Referer` 검사
 
-**시도 단계:**
+**이럴 때 사용**: CSRF 토큰은 없고 서버가 요청 출처 Header만 확인하는 것으로 보인다.
 
-```
-1. 정상 요청 (Referer: https://<TARGET>/profile)  → 200
+**바꿀 값**
 
-2. Referer 헤더 자체 제거                 → 200 이면 취약
-   (Referer 가 없을 때를 안전하게 본다는 잘못된 가정)
-
-3. Referer 변조:
-   Referer: https://attacker.com/<TARGET>/profile   ← 부분 매칭 우회
-   Referer: https://<TARGET>.attacker.com/          ← 서브도메인 트릭
-   → 통과 시 contains() 기반 검증 = 취약
-
-4. Origin 검증만 있고 null Origin 통과:
-   <iframe sandbox> 에서 발생하는 요청은 Origin: null
-   서버가 null 을 화이트리스트로 처리하면 우회 가능
+```http
+Origin: https://attacker.example
+Referer: https://attacker.example/poc.html
 ```
 
-**판정**: 위 변형 중 하나로 정상 응답이 나오면 검증 우회 가능 = 취약.
+다음 응답을 비교한다.
 
-### 케이스 4: GET 으로 상태 변경
-**언제 쓰는지**: 변경 액션이 GET 으로 처리되는 경우. 옛날 시스템이나 잘못된 RESTful 설계에서 발견.
+1. 정상 `Origin`·`Referer`
+2. `Origin` 제거
+3. `Referer` 제거
+4. 두 Header 모두 제거
+5. 다른 사이트 값 사용
+6. `https://target.example.attacker.example`처럼 대상 문자열을 포함한 외부 host 사용
 
-**예시 요청:**
+**확인할 것**: 서버는 전체 origin을 정확히 비교해야 한다. Header가 없거나 외부 host인데도 변경이 허용되면 실제 브라우저에서 같은 요청을 만들 수 있는지 확인한다.
 
+Repeater에서 Header를 삭제해 성공한 것만으로는 확정하지 않는다. 브라우저가 해당 요청에서 Header를 실제로 생략하거나 `null`로 보내는 조건이 있어야 한다.
+
+### 4. GET 요청으로 상태 변경
+
+**이럴 때 사용**: 링크를 열거나 페이지를 조회했는데 삭제·승인·설정 변경이 발생한다.
+
+```http
+GET /api/notifications/disable HTTP/1.1
+Host: target.example
 ```
-GET /api/account/transfer?to=attacker&amount=1000000 HTTP/1.1
-GET /admin/users/42/delete HTTP/1.1
-GET /logout HTTP/1.1
-```
 
-**PoC — `<img>` 한 줄로 트리거:**
+`SameSite=Lax` 쿠키는 외부 사이트에서 발생한 **top-level GET 이동**에 포함될 수 있다. 따라서 이미지 요청보다 페이지 이동으로 먼저 확인한다.
 
 ```html
-<img src="https://<TARGET>/api/account/transfer?to=attacker&amount=1000000">
+<script>
+location.href = 'https://target.example/api/notifications/disable';
+</script>
 ```
 
-**판정**: 사용자가 공격자 페이지에 접속만 해도 (또는 위 페이로드가 들어간 게시글/이메일을 보기만 해도) 자동 실행. SameSite=Lax 환경에서도 GET 은 자동 전송되므로 SameSite 가 있어도 보호 안 됨.
+**확인할 것**: 브라우저 주소가 대상 URL로 이동하면서 인증 쿠키가 포함되고, 알림 설정이 실제로 꺼지는지 확인한다.
 
-> 단순 logout CSRF 도 있지만 영향도가 낮으므로 우선순위는 이체/권한 변경 같은 임팩트 큰 액션부터.
+`<img src>`는 백그라운드 하위 리소스 요청이므로 `SameSite=Lax` 쿠키가 보통 포함되지 않는다. 인증 쿠키가 `SameSite=None`이거나 별도 우회 조건이 있을 때만 유효하다.
 
-### 케이스 5: SameSite 쿠키 미설정 + 표준 POST CSRF
+### 5. `SameSite` 쿠키 확인
 
-**언제 쓰는지**: 세션 관리 페이지에서 인증 쿠키의 SameSite 속성이 누락되었거나 `None` 인 경우.
+**이럴 때 사용**: 별도 CSRF 토큰이 없고 인증 쿠키의 `SameSite`에 의존한다.
 
-**전제:**
+| 쿠키 설정 | 외부 사이트 요청에서 기본 동작 | 다음 확인 |
+| :--- | :--- | :--- |
+| `SameSite=Strict` | cross-site 요청에 쿠키를 보내지 않음 | 신뢰 낮은 같은 site 서브도메인이나 내부 redirect가 있는지 |
+| `SameSite=Lax` | top-level GET 이동에는 쿠키를 보낼 수 있음 | 상태 변경 GET·GET Method Override |
+| 속성 생략 | 브라우저별 기본값 차이가 있음 | 실제 지원 브라우저에서 form POST 확인 |
+| `SameSite=None; Secure` | cross-site 요청에도 쿠키를 보냄 | CSRF 토큰·Origin 검사가 별도로 있는지 |
 
-```
-Set-Cookie: SESSION=...; HttpOnly; Secure       ← SameSite 누락
-Set-Cookie: SESSION=...; HttpOnly; SameSite=None  ← 명시적 None
-```
+일부 브라우저는 `SameSite`가 생략된 새 쿠키에 한해 발급 직후 약 2분 동안 top-level POST에도 쿠키를 보낼 수 있다. 명시적인 `SameSite=Lax`와 같은 동작으로 보지 말고 실제 브라우저에서 확인한다.
 
-**시나리오**: 케이스 1~4의 PoC 가 동일하게 동작. 모던 브라우저(Chrome 80+) 는 SameSite 미설정 시 `Lax` 를 기본값으로 적용하지만, 명시적으로 `None` 으로 설정된 경우 또는 옛날 환경에서는 여전히 POST CSRF 가능.
+**확인할 것**: 속성만 보고 취약 판정하지 않는다. 외부 PoC 요청에 인증 쿠키가 포함되고 상태가 변경되는지까지 확인한다.
 
-**판정**: SameSite 미흡 자체는 세션 페이지에서 보고. CSRF 페이지에서는 그 결함과 결합된 POST CSRF 가능성을 함께 보고.
+### 6. JSON 요청을 form 형식으로 바꾸기
 
-### 케이스 6: JSON CSRF
-**언제 쓰는지**: 백엔드 API 가 `Content-Type: application/json` 만 받으면 표준 CSRF 가 어려움. 단, **백엔드가 다른 Content-Type 도 받아주는 경우** 우회 가능.
+**이럴 때 사용**: 정상 요청은 JSON이지만 서버가 Content-Type을 엄격하게 제한하지 않는 것으로 보인다.
 
-**시나리오 6-1 — `text/plain` 으로 JSON 본문 전송:**
+브라우저 form은 `application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain` 요청을 만들 수 있다. 같은 endpoint가 이 형식도 받아들이는지 먼저 Repeater에서 확인한다.
 
 ```html
-<form action="https://<TARGET>/api/profile" method="POST" enctype="text/plain">
-  <input name='{"email":"attacker@evil.com","ignore":"' value='dummy"}'>
+<form action="https://target.example/api/profile" method="POST" enctype="text/plain">
+  <input name='{"displayName":"csrf-test","ignore":"' value='x"}'>
 </form>
 <script>document.forms[0].submit();</script>
 ```
 
-→ 실제 전송되는 본문: `{"email":"attacker@evil.com","ignore":"=dummy"}`
+**확인할 것**: 서버가 `text/plain` 본문을 JSON처럼 처리하고 실제 값이 바뀌는지 확인한다. JSON만 허용하고 다른 형식을 거부하면 일반 form 기반 CSRF는 어렵다.
 
-**시나리오 6-2 — `application/x-www-form-urlencoded` 로 보내도 백엔드가 JSON 파싱:**
+### 7. `PUT`·`DELETE`와 preflight
 
-일부 백엔드는 본문이 `{`로 시작하면 Content-Type 무시하고 JSON 으로 파싱. 이 경우 표준 form CSRF 가 그대로 통함.
-
-**판정**: 위 변형 중 하나로 변경이 적용되면 취약. 모던 백엔드(Spring `@RequestBody`, Express `express.json()`) 는 Content-Type 검증이 엄격하므로 거의 안 통하지만, 점검 항목으로는 시도.
-
-### 케이스 7: `fetch()` 기반 PUT/DELETE 검증 시 주의
-
-**언제 쓰는지**: 변경 액션이 `PUT /api/member/update`, `DELETE /api/member/withdraw` 처럼 폼으로 직접 보내기 어려운 메서드일 때.
+**이럴 때 사용**: 변경 요청이 `PUT`, `PATCH`, `DELETE`이거나 JavaScript에서 JSON Header를 넣어야 한다.
 
 ```html
 <script>
-fetch('https://<TARGET>/api/member/update', {
+fetch('https://target.example/api/profile', {
   method: 'PUT',
   headers: {'Content-Type': 'application/json'},
   credentials: 'include',
-  body: JSON.stringify({
-    email: 'attacker@evil.com',
-    phone: '010-0000-0000'
-  })
+  body: JSON.stringify({displayName: 'csrf-test'})
 });
 </script>
 ```
 
-이 형태는 브라우저가 CORS preflight(`OPTIONS`)를 먼저 보내므로, 서버가 공격자 origin을 허용하지 않으면 실제 `PUT` 요청이 전송되지 않는다. `DELETE` 역시 simple method가 아니므로 동일하게 preflight 대상이다.
+이 요청은 보통 실제 요청 전에 CORS preflight를 보낸다. 대상 서버가 공격자 Origin을 허용하지 않으면 브라우저가 본 요청을 보내지 않는다.
 
-**판정:** 공격자 origin에서 실제 브라우저로 열었을 때 preflight가 통과하고, 피해자 세션 쿠키가 포함된 본 요청이 전송되어 상태 변경까지 완료되면 CSRF. preflight에서 막히면 해당 `fetch()` 경로의 CSRF는 불발이며, 표준 form 전송이 가능한 `POST`, GET 변경, method override, Content-Type 우회 가능성을 별도로 본다.
+**확인할 것**: Burp에서 `OPTIONS` 이후 실제 `PUT` 요청이 전송됐는지, 쿠키가 포함됐는지, 상태가 변경됐는지 확인한다. Repeater에서 `PUT`이 성공한 것만으로는 CSRF가 아니다.
 
-### 그 외 — 짧게 언급만
-- **Login CSRF** — 공격자 계정으로 피해자가 로그인되도록 유도하는 변형. 가끔 발견되지만 영향도 낮음
-- **CSRF + XSS 결합으로 토큰 추출** — XSS 가 있으면 그 자체가 더 큰 문제. 별도 다루지 않음
-- **CORS 잘못 설정 + CSRF 결합** — `cors.md`(Priority 2) 로 분리
+preflight에서 막히면 다음 대체 경로를 확인한다.
+
+- 같은 기능을 처리하는 form `POST`
+- `_method=PUT` 같은 Method Override 파라미터
+- GET으로 처리되는 변경 요청
+- 서버가 허용하는 다른 Content-Type
+
+### 8. Login CSRF
+
+**이럴 때 사용**: 로그인 요청에 CSRF 토큰이나 출처 검사가 없고, 로그인 성공 후 세션 쿠키가 발급된다.
+
+공격자 소유의 테스트 계정 자격증명으로 자동 제출 form을 만든다. 피해자용 테스트 브라우저에서 PoC를 열어 공격자 테스트 계정으로 로그인되는지 확인한다.
+
+**확인할 것**: 브라우저가 공격자 계정으로 바뀐 뒤 사용자가 입력한 검색 기록·개인정보·결제 정보 등이 공격자 계정에 저장될 수 있는지 확인한다. 단순히 계정이 바뀌는 현상만 확인됐다면 서비스 기능과 연결되는 영향을 별도로 판단한다.
+
+---
+
+## 우회 매트릭스
+
+| 관찰 | 다음 확인 |
+| :--- | :--- |
+| 토큰을 바꾸면 차단 | 토큰 필드 전체 제거·빈 값·다른 사용자 토큰 |
+| `POST`에서만 토큰 검사 | 같은 기능의 GET·Method Override 요청 |
+| 다른 사용자 토큰 허용 | 공격자가 토큰을 확보해 피해자 요청에 넣을 수 있는지 |
+| `Origin`이 다르면 차단 | Header 없음·`null`·`Referer` fallback 처리 |
+| `Referer`에 대상 문자열이 있으면 허용 | `target.example.attacker.example` 같은 외부 host |
+| 쿠키가 `SameSite=Lax` | top-level GET 상태 변경·최근 발급 쿠키 조건 |
+| 쿠키가 `SameSite=Strict` | 신뢰 낮은 같은 site 서브도메인·내부 client-side redirect |
+| JSON 요청만 보임 | form·`text/plain`·Method Override 지원 여부 |
+| `PUT`·`DELETE` 요청 | preflight 통과 여부와 같은 기능의 form `POST` |
+| PoC 요청은 `200` | 후속 조회로 실제 상태 변경 확인 |
+| PoC 요청에 쿠키가 없음 | SameSite 설정·요청 방식·top-level 이동 여부 확인 |
 
 ---
 
 ## 취약 판정 기준
 
-다음 중 **하나라도** 해당하면 취약:
+### 취약
 
-- [ ] 변경 액션에 **CSRF 토큰 / Referer / Origin 검증이 모두 없음**
-- [ ] CSRF 토큰이 있지만 **빈 값 / 변조 값 / 다른 사용자 토큰** 으로 통과
-- [ ] Referer 헤더 **제거 / 부분 매칭 우회** 로 통과
-- [ ] **변경 액션이 GET** 으로 처리됨
-- [ ] 세션 쿠키 **SameSite 미설정 / `None` 설정** + 표준 CSRF 가능
-- [ ] JSON CSRF (Content-Type 우회) 로 변경 적용
+- [ ] 다른 Origin의 form 또는 링크로 요청했을 때 인증정보가 자동 포함되고 상태가 변경됨
+- [ ] CSRF 토큰을 제거하거나 임의 값으로 바꿔도 외부 PoC에서 변경이 실행됨
+- [ ] `Origin`·`Referer` 검사를 우회해 외부 PoC가 실행됨
+- [ ] 상태 변경 GET이 외부 top-level 이동으로 실행됨
+- [ ] JSON·Method 제한을 form 형식이나 Method Override로 바꿔 상태 변경에 성공함
+- [ ] 공격자 테스트 계정으로 피해자 브라우저를 로그인시키고 현실적인 후속 영향이 확인됨
 
-**오탐 주의:**
+### 후보 / 보류
 
-- [ ] 인증 불필요한 공개 API 는 CSRF 대상 아님
-- [ ] `Authorization: Bearer ...` 헤더만 사용하고 쿠키 세션 안 쓰는 API 는 CSRF 영향 없음 (브라우저가 헤더를 자동 추가하지 않음)
-- [ ] 조회 요청은 CSRF 보호 불필요 (단, 케이스 4의 GET 변경은 별개)
-- [ ] Repeater에서 쿠키를 직접 붙여 PUT/DELETE가 성공한 것만으로는 CSRF 아님 — 다른 origin 브라우저 실행과 preflight 통과 여부까지 확인
+- [ ] CSRF 토큰은 없지만 `SameSite` 때문에 외부 요청에 인증 쿠키가 포함되지 않음
+- [ ] `SameSite=None`이지만 CSRF 토큰이나 정확한 Origin 검사가 요청을 차단함
+- [ ] 다른 사용자 토큰은 통과하지만 공격자가 토큰을 피해자 요청에 넣을 방법은 확인되지 않음
+- [ ] Repeater에서 토큰·Header 제거 요청은 성공하지만 브라우저 PoC는 확인하지 못함
+- [ ] 외부 요청은 전송됐지만 인증 쿠키가 없거나 실제 상태가 바뀌지 않음
+- [ ] `OPTIONS` 응답만 허용되고 실제 `PUT`·`DELETE`는 전송되지 않음
+
+### 영향 상승 조건
+
+- [ ] 이메일·비밀번호·MFA·배송지·결제 정보처럼 중요한 설정을 변경할 수 있음
+- [ ] 관리자 사용자를 대상으로 공지·승인·권한 변경 기능을 실행할 수 있음
+- [ ] 현재 비밀번호나 추가 인증 없이 중요한 변경이 완료됨
+- [ ] 하나의 PoC로 여러 중요 기능에 같은 방어 누락이 재현됨
+
+조회만 하는 공개 요청이나 인증이 필요 없는 기능은 일반적인 CSRF 대상이 아니다. 단, 응답 내용을 공격자가 읽을 수 있는지는 CORS·정보 노출 관점에서 별도로 확인한다.
 
 ---
 
 ## 참고자료
 
 - [OWASP CSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html)
-- [PortSwigger - Cross-site request forgery (CSRF)](https://portswigger.net/web-security/csrf)
+- [OWASP Testing Guide - CSRF](https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/06-Session_Management_Testing/05-Testing_for_Cross_Site_Request_Forgery)
+- [PortSwigger - Cross-site request forgery](https://portswigger.net/web-security/csrf)
 - [PortSwigger - Bypassing CSRF token validation](https://portswigger.net/web-security/csrf/bypassing-token-validation)
 - [PortSwigger - Bypassing SameSite cookie restrictions](https://portswigger.net/web-security/csrf/bypassing-samesite-restrictions)
-- [OWASP Testing Guide - CSRF](https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/06-Session_Management_Testing/05-Testing_for_Cross_Site_Request_Forgery)
-- [MDN - SameSite cookies](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie/SameSite)
+- [MDN - Set-Cookie / SameSite](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie)

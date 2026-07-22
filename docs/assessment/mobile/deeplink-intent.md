@@ -1,409 +1,415 @@
 ---
-sidebar_position: 13
-title: Deep Link / Intent
-description: 모바일 진단 - Android Intent Redirection / Exported Components / iOS Custom URL Scheme / Universal Link / 외부 호출 컴포넌트 점검
-keywords: [Deep Link, Intent, Custom URL Scheme, Universal Link, Intent Redirection, Exported Components, App Links, MASVS-PLATFORM, Android, iOS]
+sidebar_position: 15
+title: Deep Link·Intent
+description: Android App Links·Custom Scheme·Intent Redirection과 iOS Universal Links·Custom URL Scheme의 검증 상태와 입력 처리 흐름을 확인하는 실무 노트
+keywords: [Deep Link, Intent, Custom URL Scheme, Universal Links, Intent Redirection, App Links, Digital Asset Links, AASA, MASVS-PLATFORM]
+toc_max_heading_level: 3
 draft: false
 ---
 
-# Deep Link / Intent
-> 다른 앱 / 외부 URL 이 점검 대상 앱의 내부 화면 / 액션을 **인증 없이 직접 호출** 하거나 **파라미터를 변조** 해 인증·인가 / 비즈니스 로직 / WebView 결합 결함으로 이어지는 영역.
-> 모바일에서 가장 빈번하게 발견되는 영역 중 하나 — 매니페스트 / Info.plist 만 봐도 1차 점검 가능.
+> 외부 URL이 앱의 어느 화면과 동작으로 연결되는지 확인한다. 링크 소유권 검증, 앱 내부 입력 검증, 로그인·권한 검증은 서로 다른 계층이며 하나가 정상이라고 나머지까지 안전한 것은 아니다.
 
-## 점검 개요
+## 사용 시점
 
-| 항목 | 내용 |
+- 푸시, 이메일, QR, 광고, 웹페이지에서 앱 내부 화면을 여는 기능이 있을 때
+- OAuth·SSO callback, 비밀번호 재설정, 초대·쿠폰 링크를 처리할 때
+- Manifest의 `BROWSABLE` filter나 iOS URL Types·Associated Domains를 발견했을 때
+- URL parameter가 WebView, 파일, 결제·송금, 내부 navigation으로 전달될 때
+- Android nested Intent를 다시 실행하는 redirector 코드를 발견했을 때
+
+Activity·Service·Receiver·Provider 자체의 권한 경계는 [Exported 컴포넌트](./exported-components.md), WebView 로딩 결과는 [WebView 보안](./webview-issues.md)에서 다룬다.
+
+## 분석 기준
+
+| 기준 | 기록할 내용 |
 | :--- | :--- |
-| **분류** | OWASP MASVS-PLATFORM-1, 3 / MASTG-TEST-0025 (Android), 0062 (iOS) |
-| **CWE** | [CWE-926: Improper Export of Android Application Components](https://cwe.mitre.org/data/definitions/926.html), [CWE-939: Improper Authorization in Handler for Custom URL Scheme](https://cwe.mitre.org/data/definitions/939.html) |
-| **영향도** | 🔴 (인증 우회 / 임의 컴포넌트 호출 / 토큰 탈취) / 🟡 (단순 화면 호출 / 정보 노출) |
-| **점검 난이도** | 하 (매니페스트 검색 + adb / xcrun) ~ 중 (Intent Redirection / Pending Intent / Universal Link 우회) |
-| **예상 점검 시간** | 1 ~ 4시간 |
+| 앱 | package·Bundle ID, 버전, build, 파일 hash |
+| 플랫폼 | Android·iOS 버전, target SDK, simulator·실기기 |
+| 링크 | scheme, host, port, path, query, fragment |
+| 연결 방식 | Custom Scheme, App Links, Universal Links |
+| 소유권 | `assetlinks.json`, AASA, signing fingerprint, app ID |
+| Handler | Activity·Scene·App delegate, navigation route |
+| 상태 | 로그아웃, 일반 사용자, 권한 사용자, 앱 cold·warm start |
+| 결과 | 화면, API 요청, redirect, WebView·외부 앱 전환 |
 
----
+App Links와 Universal Links는 도메인과 앱의 연결을 검증한다. 링크가 열렸다는 이유만으로 해당 사용자가 그 리소스를 사용할 권한까지 보장하지 않는다. 모든 parameter는 외부 입력으로 취급한다.
 
-## 점검 목적
+## 링크 유형
 
-모바일 OS 는 앱 간 호출을 위한 표준 메커니즘 (Android: Intent + Custom Scheme + App Links / iOS: Custom URL Scheme + Universal Link) 을 제공한다. 점검은 (1) **외부에서 호출 가능한 컴포넌트** 가 의도된 것인지, (2) **인증 / 인가 검증** 이 적용되는지, (3) **파라미터 검증** 이 적용되는지, (4) **다른 앱이 같은 스킴을 등록** 해 가로채기 가능한지 확인.
+| 유형 | 소유권 검증 | 실무 판단 |
+| :--- | :--- | :--- |
+| Android Custom Scheme | 없음 | 다른 앱이 같은 scheme을 등록할 수 있음 |
+| Android App Links | Digital Asset Links | `autoVerify`와 단말 검증 상태를 함께 확인 |
+| iOS Custom URL Scheme | 없음 | 동일 scheme의 대상 앱 선택은 보장되지 않음 |
+| iOS Universal Links | Associated Domains·AASA | 검증 성공 시 해당 웹 도메인과 앱 연결 |
+| Android Intent Redirection | 해당 없음 | 외부 nested Intent를 앱 권한으로 재실행하는지 확인 |
 
-> **다른 페이지와 영역 분리**
-> - WebView 로 외부 URL 로드 → `webview-issues.md`
-> - 정적 분석 (매니페스트 / Info.plist 검색) → `static-analysis.md`
-> - 환경 구축 (`adb shell am start`) → `setup-android.md`
-> - iOS 외부 호출 (`xcrun simctl openurl`) → `setup-ios.md` 흐름
-
----
-
-## 유형 구분
-
-### Android
-
-| 결함 | 핵심 |
-| :--- | :--- |
-| **Exported Activity / Service / Receiver / Provider (`exported="true"`)** | 다른 앱이 임의 호출 가능 |
-| **Intent Redirection** | 앱이 받은 Intent 의 `extras` 내 다른 Intent 를 `startActivity` 로 그대로 실행 |
-| **Custom URL Scheme (`myapp://`) 인증 우회** | 로그인 화면 건너뛰고 내부 화면 직접 진입 |
-| **App Links 검증 부재 / autoVerify 누락** | 다른 앱이 동일 스킴 등록 → 가로채기 |
-| **Pending Intent — `FLAG_IMMUTABLE` 누락 (Android 12 미만)** | `addFlags` 변조로 임의 인텐트 발사 |
-| **Content Provider 의 `grantUriPermissions="true"` + path 검증 부재** | 임의 URI 로 컨테이너 파일 접근 |
-
-### iOS
-
-| 결함 | 핵심 |
-| :--- | :--- |
-| **Custom URL Scheme (`myapp://`) 인증 우회** | 동일 |
-| **URL Scheme Hijacking** | 다른 앱이 동일 스킴 등록 → 사용자가 어느 앱을 열지 모호 |
-| **Universal Link 검증 부재 / `apple-app-site-association` 미설정** | 폴백으로 Safari 로 열림 → 피싱 |
-| **`application(_:open:options:)` 의 출처 검증 부재** | `sourceApplication` 검증 없이 처리 |
-| **`SFSafariViewController` 의 URL 검증 부재** | 임의 URL 로드 → 피싱 |
-
----
+Custom Scheme 자체가 항상 취약한 것은 아니다. 전달 데이터와 동작이 안전하고 collision 영향을 제한하면 정상 기능일 수 있다. 반대로 검증된 HTTPS link라도 handler가 `role`, `amount`, `url`을 그대로 신뢰하면 취약할 수 있다.
 
 ## 진단 절차
 
-### Step 1. 매니페스트 / Info.plist 점검
-**Android (AndroidManifest.xml):**
+#### Step 1. 전체 링크 목록
+
+Manifest, Info.plist, entitlements에서 scheme·host·path를 정리한다. Android는 같은 intent filter 안의 여러 `<data>` 속성이 조합될 수 있으므로 예상하지 않은 URL 조합도 계산한다.
+
+#### Step 2. 소유권 검증
+
+Android는 `autoVerify`, `assetlinks.json`, 단말의 domain verification state를 확인한다. iOS는 Associated Domains entitlement와 AASA의 app ID·components를 맞춘다.
+
+#### Step 3. Handler 코드
+
+Cold start와 warm start의 서로 다른 delegate·lifecycle 경로를 찾는다. parameter parsing, allowlist, 중복 key, percent decoding, null·type 처리를 확인한다.
+
+#### Step 4. 상태별 호출
+
+정상 로그아웃 기능을 사용한 뒤 링크를 호출하고, 일반 사용자와 권한 사용자 상태를 비교한다. 앱 데이터를 지우는 명령은 기본 절차로 사용하지 않는다.
+
+#### Step 5. 후속 동작
+
+화면 표시에서 끝내지 않고 API 요청, 대상 ID, WebView URL, 파일 path, 외부 앱 전환을 확인한다. 서버의 401·403과 UI만 열린 상태를 분리한다.
+
+#### Step 6. 링크 충돌
+
+민감 callback처럼 실제 collision 영향이 중요한 경우에만 별도 테스트 앱으로 같은 scheme·filter를 등록한다. 테스트 계정과 무해한 code·state를 사용한다.
+
+#### Step 7. 제한된 영향
+
+다른 사용자 데이터 한 건, preview 동작, 허용되지 않은 host 한 개처럼 최소 증거로 판단한다. 결제·삭제·대량 요청은 기본 재현에서 제외한다.
+
+상황별 첫 확인은 다음과 같다.
+
+| 단서 | 첫 확인 | 결과에서 볼 항목 |
+| :--- | :--- | :--- |
+| `myapp://` | 로그아웃 상태의 무해한 route | 인증 이동, parameter allowlist |
+| `https://` BROWSABLE | `pm get-app-links` | verified state, user selection |
+| `applinks:` entitlement | AASA와 app ID | HTTPS, redirect, components |
+| `url`·`redirect` parameter | 허용 host 밖의 HTTPS URL | WebView·외부 브라우저 목적지 |
+| `id`·`account` parameter | 본인 테스트 ID와 없는 ID | 서버 권한 검사와 오류 차이 |
+| nested Intent extra | 내부 무해 Activity | component·flag sanitization |
+| OAuth callback | code·state·PKCE 흐름 | state 검증, code 재사용, redirect 고정 |
+
+## 실습 노트
+
+### Android · 링크 목록
+
+배포 APK의 최종 Manifest에서 `VIEW`, `BROWSABLE`, scheme, host, path를 추출한다.
+
+```bash
+apkanalyzer manifest print app-release.apk
+rg -n 'android.intent.action.VIEW|android.intent.category.BROWSABLE|android:scheme|android:host|android:path|android:autoVerify' decoded/AndroidManifest.xml
+```
+
+#### Filter 조합
+
+같은 intent filter 안의 `<data>` 요소는 독립된 URL 한 줄이 아니라 속성이 병합되어 조합될 수 있다. scheme·host 조합을 의도대로 제한하려면 filter를 분리하는 편이 명확하다.
 
 ```xml
-<!-- exported 컴포넌트 검색 -->
-<activity android:name=".LoginActivity"
-          android:exported="true">                  <!-- 외부 호출 가능 -->
-    <intent-filter>
-        <action android:name="android.intent.action.VIEW"/>
-        <category android:name="android.intent.category.BROWSABLE"/>
-        <data android:scheme="myapp"/>              <!-- myapp://... -->
-        <data android:scheme="https"
-              android:host="target.com"/>           <!-- App Links: https://target.com/... -->
-    </intent-filter>
-</activity>
-
-<!-- autoVerify (App Links 검증 강제) -->
-<intent-filter android:autoVerify="true">           <!-- 권장 -->
-```
-
-**iOS (Info.plist):**
-
-```xml
-<!-- Custom URL Scheme -->
-<key>CFBundleURLTypes</key>
-<array>
-    <dict>
-        <key>CFBundleURLSchemes</key>
-        <array>
-            <string>myapp</string>                  <!-- myapp:// -->
-        </array>
-    </dict>
-</array>
-
-<!-- Universal Link (entitlements 에 정의됨) -->
-<key>com.apple.developer.associated-domains</key>
-<array>
-    <string>applinks:target.com</string>
-</array>
-```
-
-### Step 2. 외부 호출로 동작 관찰
-
-**Android:**
-
-```bash
-# 1) 모든 exported 컴포넌트 목록
-aapt dump xmltree target.apk AndroidManifest.xml | grep -i "exported\|scheme\|host"
-
-# 2) 직접 호출
-# Custom URL Scheme
-adb shell am start -a android.intent.action.VIEW -d "myapp://open/admin"
-
-# Activity 직접 호출
-adb shell am start -n com.target.app/.AdminActivity
-adb shell am start -n com.target.app/.WebActivity --es url "https://attacker.com"
-
-# Service 호출
-adb shell am startservice -n com.target.app/.BackgroundService
-
-# Receiver 호출
-adb shell am broadcast -a com.target.app.ACTION_DO_THING --es data "..."
-
-# Provider 조회
-adb shell content query --uri content://com.target.provider/users
-```
-
-**iOS:**
-
-```bash
-# 시뮬레이터
-xcrun simctl openurl booted "myapp://open/admin?token=ATTACKER"
-
-# 실기기
-uiopen "myapp://open/admin?token=ATTACKER"
-
-# 또는 다른 앱에서 호출
-```
-
-### Step 3. 인증 / 인가 / 파라미터 검증 확인
-
-각 호출에 대해 다음 시나리오 점검:
-
-1. **로그아웃 상태에서 내부 화면 호출** — 인증 화면으로 리다이렉트되는지
-2. **다른 사용자 권한으로 진입** — 일반 사용자 토큰으로 관리자 화면 호출 시 차단되는지
-3. **파라미터 변조** — `id` / `amount` / `token` 변경 시 정상 검증되는지
-4. **WebView 와 결합** — `url` 파라미터로 외부 URL 로드 가능한지 (`webview-issues.md` 케이스 3)
-
----
-
-## 페이로드 / 테스트 케이스
-
-### 케이스 1 (Android): Custom URL Scheme 인증 우회
-
-**언제 점검하는지**: 앱이 푸시 알림 / 마케팅 링크에서 딥링크를 받아 내부 화면으로 이동시키는 모든 경우.
-
-**위험 코드:**
-
-```java
-// MainActivity.onCreate (또는 LinkHandlerActivity)
-Uri uri = getIntent().getData();
-if (uri != null) {
-    String path = uri.getPath();
-    if (path.startsWith("/payment/")) {
-        startActivity(new Intent(this, PaymentActivity.class));   // ← 인증 확인 없이 결제 화면
-    }
-}
-```
-
-**PoC:**
-
-```bash
-# 1) 앱을 강제 로그아웃 후 종료
-adb shell pm clear com.target.app
-
-# 2) 딥링크 직접 호출
-adb shell am start -a android.intent.action.VIEW -d "myapp://payment/confirm?amount=1000000"
-```
-
-**판정**: 로그아웃 상태에서 결제 / 인증 / 권한 변경 화면이 그대로 진입되면 미흡 (High). 딥링크 진입 시 **세션 검증 → 미인증이면 로그인 화면으로 리다이렉트** 가 표준.
-
-### 케이스 2 (Android): Intent Redirection
-
-**언제 점검하는지**: 앱이 받은 Intent 의 `extras` 에서 다른 Intent 를 꺼내 `startActivity` / `sendBroadcast` 로 그대로 실행하는 패턴.
-
-**위험 코드:**
-
-```java
-// 받은 Intent 안에 또 다른 Intent 가 있고, 그걸 그대로 실행
-Intent forwardIntent = (Intent) getIntent().getParcelableExtra("forward");
-if (forwardIntent != null) {
-    startActivity(forwardIntent);   // ← 임의 컴포넌트 호출 가능
-}
-```
-
-**PoC:**
-
-```bash
-# 점검 대상 앱의 권한 / 컨텍스트로 임의 컴포넌트 호출
-adb shell am start -n com.target.app/.RedirectActivity \
-    --es forward 'intent:#Intent;component=com.target.app/.AdminActivity;end'
-```
-
-**판정**: `RedirectActivity` 의 권한 (예: 시스템 / 자사 권한) 으로 `AdminActivity` 호출됨 → 권한 우회. Critical 가능.
-
-### 케이스 3 (Android): Exported Component + 권한 검증 부재
-
-**언제 점검하는지**: 매니페스트에서 `exported="true"` + 권한 (`permission` 속성) 없는 컴포넌트.
-
-**위험 매니페스트:**
-
-```xml
-<service android:name=".SmsForwardService" android:exported="true"/>        <!-- 권한 없음 -->
-<receiver android:name=".AuthBroadcastReceiver" android:exported="true"/>   <!-- 권한 없음 -->
-<provider android:name=".UserProvider" android:exported="true"
-          android:authorities="com.target.provider"/>                       <!-- 권한 없음 -->
-```
-
-**PoC:**
-
-```bash
-# Service — 점검 대상 권한으로 임의 동작
-adb shell am startservice -n com.target.app/.SmsForwardService --es to "+82-10-..."
-
-# Receiver — 인증 처리에 영향
-adb shell am broadcast -a com.target.app.ACTION_LOGIN --es token "fake_token"
-
-# Provider — 사용자 테이블 조회 / 변조
-adb shell content query --uri content://com.target.provider/users
-adb shell content insert --uri content://com.target.provider/users --bind user_id:i:999 --bind role:s:admin
-```
-
-**판정**: 외부에서 임의 호출 + 인증 / 권한 / 파라미터 검증 없으면 미흡 (High ~ Critical).
-
-### 케이스 4 (Android): App Links autoVerify 누락 → 다른 앱이 같은 스킴 등록
-**언제 점검하는지**: 매니페스트의 `<intent-filter>` 에 `https://target.com/...` 가 있지만 `autoVerify="true"` 가 없을 때.
-
-```xml
-<!-- 위험 — autoVerify 없음 -->
-<intent-filter>
-    <action android:name="android.intent.action.VIEW"/>
-    <category android:name="android.intent.category.BROWSABLE"/>
-    <data android:scheme="https" android:host="target.com"/>
+<intent-filter android:autoVerify="true">
+    <action android:name="android.intent.action.VIEW" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <category android:name="android.intent.category.BROWSABLE" />
+    <data
+        android:scheme="https"
+        android:host="account.example.test"
+        android:pathPrefix="/link/" />
 </intent-filter>
 ```
 
-**시나리오:**
+`android:exported="true"`는 BROWSABLE Activity의 진입 조건일 뿐 handler의 parameter 안전성을 보장하지 않는다.
 
-```
-1) 공격자가 동일 host (target.com) 의 intent-filter 등록한 악성 앱 배포
-2) 사용자가 https://target.com/login?... 클릭
-3) Android 가 "어느 앱으로 열까요?" 선택 다이얼로그 표시 또는 잘못된 앱 자동 선택
-4) 악성 앱이 token / 인증코드 파라미터 가로채기
-```
+### Android · Custom Scheme
 
-**판정**: `autoVerify="true"` + `apple-app-site-association` 같은 `assetlinks.json` 검증 없이는 가로채기 가능. 인증코드 / OAuth callback 등 민감 콜백이 이 패턴이면 Critical.
+Custom Scheme은 소유권을 검증하지 않으므로 어떤 앱도 같은 scheme을 선언할 수 있다. Android에서는 일반적인 deep-link Intent의 신뢰할 수 있는 호출자 식별도 기대하지 않는다.
 
-### 케이스 5 (Android): Pending Intent — `FLAG_IMMUTABLE` 누락
-**언제 점검하는지**: 푸시 알림 / 위젯 / 알람 등에서 Pending Intent 사용.
+#### 직접 호출
 
-**위험 코드:**
-
-```java
-// FLAG_IMMUTABLE 없음 → 다른 앱이 intent 의 extras / action / data 변조 가능
-PendingIntent pi = PendingIntent.getActivity(this, 0, intent, 0);
-// 권장: PendingIntent.FLAG_IMMUTABLE
+```bash
+adb shell am start -W \
+  -a android.intent.action.VIEW \
+  -c android.intent.category.BROWSABLE \
+  -d 'com.example.target://profile/view?id=test-account'
 ```
 
-**판정**: Android 12 (API 31) 부터 `FLAG_IMMUTABLE` 또는 `FLAG_MUTABLE` 명시 필수 — 누락 시 OS 가 차단. 그러나 **targetSdk < 31** 인 앱은 여전히 취약. 점검 대상의 `targetSdk` 확인 + 변조 가능성 검토.
+다음 순서로 값을 바꾼다.
 
-### 케이스 6 (iOS): Custom URL Scheme 인증 우회
+| 값 | 첫 변형 | 확인할 것 |
+| :--- | :--- | :--- |
+| route | 존재하지 않는 path | 기본 route·오류 처리 |
+| ID | 본인 테스트 ID·없는 ID | 서버 권한 검사·enumeration 차이 |
+| 숫자 | 0, 음수, 허용 범위 경계 | client·server validation |
+| 중복 key | `id=a&id=b` | parser별 first·last 처리 차이 |
+| encoding | 한 번 percent encoding | decode 순서와 allowlist 적용 시점 |
 
-**언제 점검하는지**: `application(_:open:options:)` 또는 `scene(_:openURLContexts:)` 에서 URL 처리.
+앱이 열리는 것과 민감 기능 사용은 다르다. 로그아웃 상태에서 화면만 표시되고 서버가 401을 반환하면 인증 우회로 확정하지 않는다.
 
-**위험 코드:**
+### Android · App Links
 
-```swift
-func application(_ application: UIApplication,
-                 open url: URL,
-                 options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-    if url.host == "payment" {
-        // 인증 검증 없이 결제 화면 진입
-        let vc = PaymentViewController()
-        vc.amount = url.queryParameter("amount")
-        navigationController?.pushViewController(vc, animated: true)
-    }
-    return true
+App Links는 `autoVerify="true"`만으로 완성되지 않는다. 서버의 `assetlinks.json`과 설치 단말의 검증 결과를 확인한다.
+
+#### 서버 연결
+
+```bash
+curl -i https://account.example.test/.well-known/assetlinks.json
+apksigner verify --print-certs app-release.apk
+```
+
+`assetlinks.json`의 `package_name`과 `sha256_cert_fingerprints`를 배포 앱과 맞춘다. Play App Signing을 사용하면 로컬 upload key가 아니라 사용자 단말에 배포되는 app signing certificate가 기준이다.
+
+#### 단말 상태
+
+```bash
+adb shell pm get-app-links com.example.target
+adb shell pm get-app-links --user cur com.example.target
+```
+
+`verified`와 사용자의 link handling 선택 상태를 분리한다. 사용자가 브라우저 열기를 선택한 결과는 domain 소유권 검증 실패와 다르다.
+
+#### 링크 실행
+
+```bash
+adb shell am start -W \
+  -a android.intent.action.VIEW \
+  -c android.intent.category.BROWSABLE \
+  -d 'https://account.example.test/link/profile?id=test-account'
+```
+
+Android 12 이상에서는 검증되지 않은 일반 web link가 기본 브라우저로 갈 수 있다. 앱이 열리지 않았다는 사실만으로 악성 앱 가로채기가 재현됐다고 표현하지 않는다.
+
+### Android · Intent Redirection
+
+외부 Intent에서 nested Intent나 intent URI 문자열을 받아 그대로 `startActivity`, `startService`, `bindService`에 전달하는 코드를 찾는다.
+
+```bash
+rg -n 'getParcelableExtra|Intent\.parseUri|startActivity\(|startService\(|bindService\(|removeLaunchSecurityProtection|IntentSanitizer' jadx-output/sources
+```
+
+#### 위험 구조
+
+```kotlin
+val forward = intent.getParcelableExtra<Intent>("forward")
+if (forward != null) {
+    startActivity(forward)
 }
 ```
 
-**PoC:**
+문자열 extra는 Parcelable Intent가 아니므로 `adb --es`만으로 이 구조를 정확히 재현했다고 보지 않는다. 별도 PoC 앱에서 실제 nested Intent를 전달한다.
+
+```kotlin
+val nested = Intent().setClassName(
+    "com.example.target",
+    "com.example.target.InternalPreviewActivity"
+)
+val outer = Intent().setClassName(
+    "com.example.target",
+    "com.example.target.RedirectActivity"
+).putExtra("forward", nested)
+
+startActivity(outer)
+```
+
+component·package allowlist, data·type·category, URI grant flag 제거를 확인한다. AndroidX `IntentSanitizer`가 있어도 허용 규칙이 과도하지 않은지 본다. Android 16의 기본 launch security hardening과 `removeLaunchSecurityProtection()` 사용 여부도 기록하고 대상 OS에서 실제 결과를 확인한다.
+
+### iOS · 링크 목록
+
+Custom Scheme은 `Info.plist`, Universal Links는 signed entitlements에서 확인한다.
 
 ```bash
-# 시뮬레이터
-xcrun simctl openurl booted "myapp://payment?amount=1000000"
-
-# 실기기
-uiopen "myapp://payment?amount=1000000"
+plutil -p Payload/Target.app/Info.plist
+codesign -d --entitlements :- Payload/Target.app
 ```
 
-**판정**: 케이스 1 (Android) 와 동일 — 미인증 상태에서 민감 화면 진입 가능 / 파라미터 변조 → High.
+주요 handler는 다음과 같다.
 
-### 케이스 7 (iOS): URL Scheme Hijacking — 같은 스킴 등록 가능
+- `application(_:open:options:)`
+- `scene(_:openURLContexts:)`
+- `application(_:continue:restorationHandler:)`
+- `scene(_:continue:)`
+- SwiftUI `onOpenURL`
 
-**언제 점검하는지**: 앱이 `myapp://` 같은 짧고 흔한 커스텀 스킴 사용.
+Cold start와 이미 실행 중인 상태에서 다른 method가 호출될 수 있으므로 둘 다 확인한다.
 
-```
-시나리오:
-1) 공격자 앱이 동일 스킴 (myapp) 등록
-2) 사용자가 myapp://oauth_callback?code=xxx 호출
-3) iOS 는 같은 스킴을 가진 앱이 여러 개면 "최근 설치된 앱" 또는 "임의 앱" 선택
-4) OAuth 인증코드가 공격자 앱으로 전달
-```
+### iOS · Custom Scheme
 
-**판정**: 인증 콜백 / OAuth / SSO 가 Custom URL Scheme 만 사용하면 가로채기 가능 → **Universal Link 로 마이그레이션 필수**.
+Apple도 Custom Scheme parameter 검증을 요구하며, 동일 scheme을 여러 앱이 등록하면 대상 선택은 정의되지 않는다. reverse-DNS 형태의 긴 scheme은 충돌 가능성을 줄이지만 소유권을 보장하지 않는다.
 
-### 케이스 8 (iOS): Universal Link `apple-app-site-association` 미설정 / 잘못된 설정
-
-**언제 점검하는지**: Info.plist 에 `applinks:` entitlement 가 있지만 해당 도메인의 `apple-app-site-association` 가 잘못되거나 없을 때.
-
-**점검:**
+#### Simulator 호출
 
 ```bash
-# 자사 도메인의 AASA 파일 확인
-curl -s https://target.com/.well-known/apple-app-site-association | jq
+xcrun simctl openurl booted 'com.example.target://profile/view?id=test-account'
+```
 
-# 정상 응답
+실기기에서는 Notes·Mail·테스트 웹페이지의 링크를 눌러 cold·warm start를 비교한다. URL에 실제 token이나 개인정보를 넣지 않는다.
+
+`sourceApplication`은 없을 수 있으므로 단독 인증 수단으로 사용하지 않는다. source가 예상 앱이어도 URL parameter와 현재 사용자 권한은 다시 검증한다.
+
+### iOS · Universal Links
+
+Associated Domains entitlement와 도메인의 AASA 파일이 양방향으로 일치해야 한다.
+
+```bash
+curl -i https://account.example.test/.well-known/apple-app-site-association
+```
+
+AASA는 확장자 없이 HTTPS로 제공하고 redirect를 사용하지 않는다. `appIDs`·`appID`가 Team ID·Bundle ID와 맞는지, `components`·`paths` 범위가 앱의 실제 route와 맞는지 확인한다.
+
+```json
 {
   "applinks": {
-    "details": [{
-      "appIDs": ["TEAMID.com.target.app"],
-      "components": [{ "/": "/payment/*" }, { "/": "/account/*" }]
-    }]
+    "details": [
+      {
+        "appIDs": ["TEAMID1234.com.example.target"],
+        "components": [
+          { "/": "/link/profile/*" },
+          { "/": "/link/reset/*" }
+        ]
+      }
+    ]
   }
 }
 ```
 
-**판정**:
+전체 path 허용은 routing 범위가 넓다는 뜻이지 자동 취약점은 아니다. 앱 handler의 allowlist와 인증을 확인한다. AASA 실패로 Safari에 열리는 정상 fallback도 단독 피싱 취약점으로 판정하지 않는다.
 
-- AASA 가 404 / 잘못된 컴포넌트 → 앱이 핸들링 못하고 **Safari 로 폴백** → 피싱 가능
-- `*` 와일드카드 광범위 사용 → 의도 외 URL 까지 앱에서 처리
+### 공통 · 입력·후속 동작
 
-### 케이스 9 (공통): WebView 결합 — `url` 파라미터로 외부 URL 로드
+링크 route를 파악한 뒤 입력이 도달하는 sink를 기준으로 테스트한다.
 
-**위험 시나리오 (Android):**
+| 입력 | 위험한 sink | 최소 확인 |
+| :--- | :--- | :--- |
+| `url`, `redirect`, `next` | WebView·외부 browser | scheme·host allowlist 밖 URL 한 개 |
+| `file`, `path` | file API·ContentProvider | test fixture의 상위 path 거부 |
+| `id`, `account`, `order` | API resource selector | 본인 ID와 없는 ID의 차이 |
+| `amount`, `role`, `mode` | 업무 상태·권한 분기 | 허용 범위 경계와 서버 재검증 |
+| `code`, `token`, `state` | OAuth·SSO·reset | URL 노출, state·PKCE, 1회성 |
+| nested Intent | Android component launch | target·flag allowlist |
 
-```bash
-# myapp://web?url=... 패턴 — webview-issues.md 의 케이스 3 과 결합
-adb shell am start -a android.intent.action.VIEW -d "myapp://web?url=https://attacker.com/phish"
-```
+#### WebView 연결
 
-**판정**: WebView 가 `url` 파라미터를 검증 없이 로드 → 피싱 / Native 메서드 호출 결합. 가장 빈번한 결합 패턴 — `webview-issues.md` 참조.
+외부 URL이 앱 내부 origin의 WebView에 들어가는지, JavaScript bridge·cookie가 붙는지 확인한다. 상세 판정은 [WebView 보안](./webview-issues.md)으로 넘긴다.
 
-### 그 외 — 한 줄 언급
+#### OAuth·SSO Callback
 
-- **iOS `SFSafariViewController` URL 검증 부재** — Custom Scheme 호출 자체보다 영향 작음 (다른 앱에서 열리지 않음). 단, 피싱 가능성은 동일
-- **iOS `LSApplicationQueriesSchemes`** — `canOpenURL:` 으로 다른 앱 설치 여부 조회 가능. 정보 노출 영역. iOS 9+ 부터 화이트리스트 필요
-- **Android Slice / Shortcut / App Actions** — 신규 표면. 일반 Exported 컴포넌트 점검과 동일 흐름
+Custom Scheme 사용만으로 Critical로 판정하지 않는다. 다음을 함께 확인한다.
 
----
+- redirect URI가 client 등록값과 정확히 일치하는지
+- authorization request와 callback의 `state`가 연결되는지
+- public native client에 PKCE가 적용되는지
+- code가 짧은 시간의 1회성이고 다른 client에서 교환되지 않는지
+- code·token이 log, analytics, clipboard에 남지 않는지
+- 가능하면 claimed HTTPS redirect(App Links·Universal Links)를 사용하는지
 
-## 취약 판정 기준
+테스트 계정의 무효 code나 자체 발급한 state로 흐름만 확인하고 실제 token을 문서·명령 기록에 남기지 않는다.
 
-다음 중 **하나라도** 해당하면 취약 / 미흡:
+## 결과 판정
 
-- [ ] **Android**: Custom URL Scheme / App Links 진입 시 **인증 검증 부재** → 미인증으로 민감 화면 진입
-- [ ] **Android**: `exported="true"` 컴포넌트 + 권한 (`permission`) 미적용 → 외부 앱 호출 가능
-- [ ] **Android**: Intent Redirection — `getParcelableExtra("intent")` 등을 그대로 `startActivity`
-- [ ] **Android**: `autoVerify="true"` 없는 App Links → 다른 앱이 같은 host 등록 가능
-- [ ] **Android**: `targetSdk < 31` + `FLAG_IMMUTABLE` 누락 PendingIntent
-- [ ] **Android**: Content Provider `exported="true"` + path / 권한 검증 부재
-- [ ] **iOS**: `application(_:open:options:)` 에서 **인증 검증 / `sourceApplication` 검증 부재**
-- [ ] **iOS**: Custom URL Scheme 만으로 OAuth / SSO 콜백 처리 (Universal Link 미사용)
-- [ ] **iOS**: Universal Link `apple-app-site-association` 누락 / 광범위 `/` 패턴
-- [ ] **공통**: 딥링크 파라미터 (`url`, `redirect`, `next`) 가 WebView 로 검증 없이 전달
+| 확인 결과 | 판정 방향 |
+| :--- | :--- |
+| Custom Scheme 선언 | 외부 입력면이며 단독 취약점 아님 |
+| Android HTTPS filter에 `autoVerify` 없음 | unverified link 설정 확인, 실제 영향 산정 필요 |
+| `autoVerify` 존재·단말 state 미검증 | 서버·fingerprint·단말 결과 확인 전 후보 |
+| App Links state `verified` | 도메인 연결 검증 성공, handler 검증은 별도 |
+| AASA 누락·불일치 | Universal Link 연결 실패, fallback 영향 확인 |
+| 동일 Custom Scheme 테스트 앱이 callback 수신 | link collision 재현 확인 |
+| 링크로 민감 화면만 표시 | 서버 요청·권한 결과 확인 전 후보 |
+| 로그아웃·타 권한에서 민감 API 성공 | 인증·인가 우회 확정 |
+| 외부 URL이 privileged WebView로 로드 | WebView 결합 영향 확인 |
+| nested Intent로 private component 기능 도달 | Intent Redirection 확정 |
+| Custom Scheme OAuth + PKCE·state 정상 | collision 영향이 제한될 수 있어 code 교환까지 검토 |
+| URL에 장기 token·개인정보 포함 | log·전달 경로 노출과 재사용 가능성 확인 |
 
-**오탐 주의:**
+영향은 민감 parameter, 사용자 동작 필요성, 앱 설치 조건, 서버 검증, token 재사용, WebView bridge 권한을 기준으로 정한다. 단순히 앱이 열리거나 브라우저로 fallback되는 현상만으로 높은 심각도를 부여하지 않는다.
 
-- [ ] `LAUNCHER` intent-filter 만 있는 Activity 는 외부 호출 불가 — `exported="true"` 정상
-- [ ] `BIND_JOB_SERVICE` / `BIND_INPUT_METHOD` 등 시스템 권한이 필요한 컴포넌트는 외부 임의 호출 불가
-- [ ] iOS Universal Link 가 정상 적용된 경우 다른 앱 가로채기 불가 (AASA 가 보호)
+## 증적 항목
 
----
+- 앱 hash, 버전, Android target SDK·iOS version
+- 전체 scheme·host·path·query 목록
+- Manifest filter와 iOS entitlements
+- assetlinks package·fingerprint와 단말 verification state
+- AASA app ID·components·HTTP 상태·redirect 여부
+- handler class·method와 cold·warm start 경로
+- 변형한 parameter와 예상·실제 route
+- 로그인·권한 상태와 후속 API status
+- 별도 collision·nested Intent PoC 앱의 package·서명
+- 마스킹한 callback·request ID
+- 확정·후보·보류와 영향 상승 조건
 
-## 다른 페이지로 위임
+## 트러블슈팅
 
-- **WebView 결합 (딥링크 url 파라미터로 WebView 외부 URL 로드)** → `webview-issues.md`
-- **매니페스트 / Info.plist 검색** → `static-analysis.md`
-- **딥링크 호출 환경 (`adb` / `xcrun simctl`)** → `setup-android.md`, `setup-ios.md`
-- **인증 결함 (딥링크 진입 시 인증 우회)** → 본 페이지 + 일반 인증 점검 (`assessment/web/authentication.md` 와 모바일 인증 결함은 별도)
-- **인증 / 권한 부재로 인한 내부 API 호출 가능 여부** → `assessment/web/authorization-idor.md` 와 동일 흐름 (모바일에서는 서버 API 호출 흐름이 웹과 공통)
+#### Android 링크의 Browser 전환
 
----
+- `pm get-app-links`의 domain state와 user selection을 확인한다.
+- `DEFAULT`·`BROWSABLE`, scheme, host, path filter를 다시 맞춘다.
+- Android 12 전후의 web intent 동작 차이를 기록한다.
+
+#### App Links `legacy_failure`
+
+- `assetlinks.json`의 HTTPS 상태와 JSON 형식을 확인한다.
+- package와 배포 signing fingerprint를 맞춘다.
+- 테스트 단말에서 re-verification 후 충분히 기다린다.
+
+#### iOS Universal Link의 Safari 전환
+
+- entitlement와 AASA의 Team ID·Bundle ID를 맞춘다.
+- AASA가 HTTPS·무redirect로 제공되는지 확인한다.
+- 같은 도메인 내 Safari navigation과 Notes 등 외부 출발 링크를 비교한다.
+- 설치 후 association cache 갱신 시간을 고려한다.
+
+#### Custom Scheme 무반응
+
+- scheme·host·path 구분과 percent encoding을 확인한다.
+- 앱 cold·warm state의 handler method를 각각 본다.
+- 다른 앱이 같은 scheme을 등록했는지 확인한다.
+
+#### Intent Redirection 재현 실패
+
+- handler가 Parcelable Intent, URI 문자열, Bundle 중 무엇을 읽는지 맞춘다.
+- Android 16 launch hardening과 target OS를 확인한다.
+- component가 private인지보다 redirector 권한으로 기능에 도달하는지 본다.
+
+#### 로그아웃 상태의 자동 로그인
+
+- SSO cookie, Keychain·Keystore token, refresh token이 남아 있는지 확인한다.
+- 앱 데이터 삭제 대신 정상 로그아웃과 별도 테스트 계정을 사용한다.
+- 링크가 인증을 우회한 것인지 정상 session 복원인지 구분한다.
+
+## 빠른 명령어 참조
+
+본문 명령을 반복하지 않고 검증 상태 초기화·후속 관찰 명령만 모았다.
+
+| 목적 | 명령 | 주의사항 |
+| :--- | :--- | :--- |
+| Android 재검증 | `adb shell pm verify-app-links --re-verify com.example.target` | 테스트 단말에서 비동기 완료 대기 |
+| Activity 로그 | `adb logcat -s ActivityTaskManager ActivityManager` | resolve package와 permission 확인 |
+| iOS AASA 응답 | `curl -v https://HOST/.well-known/apple-app-site-association` | TLS, redirect, content type 확인 |
+| iOS 앱 식별자 | `codesign -dvvv Payload/Target.app` | TeamIdentifier·Authority 확인 |
+| URL 문자열 | `rg -n '://|onOpenURL|openURLContexts|continueUserActivity' SOURCE` | sample·test URL 구분 |
+
+App Links state를 완전히 reset하는 명령은 사용자 선택도 바꿀 수 있으므로 별도 테스트 단말에서만 사용한다.
+
+## 관련 문서
+
+- [Exported 컴포넌트](./exported-components.md)
+- [WebView 보안](./webview-issues.md)
+- [인증 및 세션](./auth-mobile.md)
+- [정적 분석](./static-analysis.md)
+- [Android 분석 환경](./setup-android.md)
+- [iOS 분석 환경](./setup-ios.md)
 
 ## 참고자료
 
-- [OWASP MASTG-TEST-0025 - Deep Links (Android)](https://mas.owasp.org/MASTG/tests/android/MASVS-PLATFORM/MASTG-TEST-0025/)
-- [OWASP MASTG-TEST-0062 - Custom URL Schemes (iOS)](https://mas.owasp.org/MASTG/tests/ios/MASVS-PLATFORM/MASTG-TEST-0062/)
-- [Android - App Links](https://developer.android.com/training/app-links)
-- [Android - PendingIntent Mutability](https://developer.android.com/guide/components/intents-filters)
-- [Android - Intent Redirection](https://support.google.com/faqs/answer/9267555)
-- [Apple - Universal Links](https://developer.apple.com/documentation/xcode/allowing-apps-and-websites-to-link-to-your-content)
-- [Apple - Defining a Custom URL Scheme](https://developer.apple.com/documentation/xcode/defining-a-custom-url-scheme-for-your-app)
-- [PortSwigger - Exploiting Android Deep Links](https://portswigger.net/research/exploiting-android-deep-links)
-- [HackTricks - Android Deep Links](https://book.hacktricks.xyz/mobile-pentesting/android-app-pentesting/exploiting-content-providers)
-- [HackTricks - iOS Custom URL Schemes](https://book.hacktricks.xyz/mobile-pentesting/ios-pentesting/ios-custom-uri-handlers-deeplinks-custom-schemes)
+#### 공식 문서
+
+- [Android Developers - About App Links](https://developer.android.com/training/app-links/about)
+- [Android Developers - Verify App Links](https://developer.android.com/training/app-links/verify-applinks)
+- [Android Developers - Intent Redirection](https://developer.android.com/privacy-and-security/risks/intent-redirection)
+- [Apple Developer - Supporting Associated Domains](https://developer.apple.com/documentation/xcode/supporting-associated-domains)
+- [Apple Developer - Debugging Universal Links](https://developer.apple.com/documentation/technotes/tn3155-debugging-universal-links)
+- [Apple Developer - Custom URL Schemes](https://developer.apple.com/documentation/xcode/defining-a-custom-url-scheme-for-your-app)
+- [IETF RFC 8252 - OAuth 2.0 for Native Apps](https://www.rfc-editor.org/rfc/rfc8252)
+
+#### 점검 가이드
+
+- [OWASP MASTG - Unverified App Links](https://mas.owasp.org/MASTG/tests/android/MASVS-PLATFORM/MASTG-TEST-0393/)
+- [OWASP MASTG - Android Custom Scheme Input](https://mas.owasp.org/MASTG/tests/android/MASVS-PLATFORM/MASTG-TEST-0394/)
+- [OWASP MASTG - iOS Custom URL Schemes](https://mas.owasp.org/MASTG/knowledge/ios/MASVS-PLATFORM/MASTG-KNOW-0079/)
+- [OWASP MASTG - iOS Universal Links](https://mas.owasp.org/MASTG/knowledge/ios/MASVS-PLATFORM/MASTG-KNOW-0080/)

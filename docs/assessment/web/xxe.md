@@ -1,12 +1,11 @@
 ---
-sidebar_position: 14
+sidebar_position: 29
 title: XXE
 description: 웹 진단 - XML External Entity 진입점, In-band/Blind 판단, SVG 업로드, OOB 데이터 추출
 keywords: [XXE, XML External Entity, Blind XXE, OOB, SVG, XML parser, OWASP A05]
 draft: false
+toc_max_heading_level: 3
 ---
-
-# XML 외부 엔티티 (XXE)
 
 ## 점검 목적
 
@@ -26,7 +25,7 @@ XML을 처리하는 엔드포인트가 DTD(Document Type Definition)와 외부 �
 
 ## 진단 절차
 
-### Step 1. 진입점 식별
+#### Step 1. 진입점 식별
 
 XML 파서가 지나가는 기능을 먼저 찾는다. `Content-Type`과 파일 포맷이 가장 빠른 단서다.
 
@@ -48,7 +47,7 @@ XML 파서가 지나가는 기능을 먼저 찾는다. `Content-Type`과 파일 
 | Python | `xml.etree`, `lxml`, `minidom`, `sax` |
 | Node.js | `libxmljs`, `xml2js`, `xmldom`, SOAP/XML middleware |
 
-### Step 2. DOCTYPE 처리 여부 확인
+#### Step 2. DOCTYPE 처리 여부 확인
 
 정상 XML 요청을 baseline으로 저장한 뒤, 영향이 낮은 파일부터 확인한다.
 
@@ -68,7 +67,7 @@ Windows 후보는 아래처럼 본다.
 
 응답에 파일 내용이 보이면 In-band XXE다. 응답이 같아도 XML 에러, status, length, 처리 시간, 후처리 파일 변화를 같이 비교한다.
 
-### Step 3. 컨텍스트별 빠른 선택
+#### Step 3. 컨텍스트별 빠른 선택
 
 | 입력 컨텍스트 | 먼저 넣을 값 | 볼 것 |
 | :--- | :--- | :--- |
@@ -80,7 +79,7 @@ Windows 후보는 아래처럼 본다.
 | 응답 미노출 | 외부 DTD URL | Collaborator/interactsh DNS/HTTP 요청 |
 | Cloud 후보 | IMDS URL 엔티티 | role name, instance document, credential JSON 노출 |
 
-### Step 4. 관찰 결과별 판단
+#### Step 4. 관찰 결과별 판단
 
 | 관찰 결과 | 바로 판단 | 다음 행동 |
 | :--- | :--- | :--- |
@@ -92,7 +91,7 @@ Windows 후보는 아래처럼 본다.
 | 외부 HTTP URL 결과가 응답에 보임 | SSRF via XXE 가능 | localhost/internal/metadata로 확장 |
 | 업로드는 성공했지만 화면 변화 없음 | 후처리형 후보 | 썸네일, 변환 파일, 관리자 검수, 비동기 작업 시점 확인 |
 
-### Step 5. 영향 확인
+#### Step 5. 영향 확인
 
 취약 확정 후에는 단순 `/etc/passwd`보다 실제 위험을 보여주는 값을 좁혀 확인한다.
 
@@ -106,7 +105,7 @@ Windows 후보는 아래처럼 본다.
 
 ## 페이로드 노트
 
-### 기본 In-band 파일 읽기
+### 1. 기본 In-band 파일 읽기
 
 가장 먼저 서버가 외부 엔티티를 실제 값으로 치환하는지 본다.
 
@@ -125,7 +124,7 @@ Windows 후보는 아래처럼 본다.
 - 파일 내용 일부만 보이면 XML 문자 제약, 출력 길이 제한, 필드 검증을 의심
 - 500만 발생하면 에러 본문을 확인하고, 같은 구조에서 `/etc/hostname`으로 낮춰 재시도
 
-### Windows 파일 확인
+### 2. Windows 파일 확인
 
 Windows/IIS/.NET 후보는 `win.ini`가 가볍다.
 
@@ -137,7 +136,7 @@ Windows/IIS/.NET 후보는 `win.ini`가 가볍다.
 
 `[fonts]`, `[extensions]` 같은 문자열이 보이면 파일 읽기 가능으로 본다.
 
-### PHP wrapper로 소스코드 추출
+### 3. PHP wrapper로 소스코드 추출
 
 대상이 PHP이고 In-band XXE가 가능하면 일반 `.php` 파일은 실행되어 소스가 안 보일 수 있다. 이때 base64 wrapper로 읽는다.
 
@@ -155,7 +154,7 @@ Windows/IIS/.NET 후보는 `win.ini`가 가볍다.
 echo "PD9waHAgLi4u" | base64 -d
 ```
 
-### SSRF via XXE
+### 4. SSRF via XXE
 
 외부 엔티티가 `http://` URL도 가져오면 XXE가 SSRF로 확장된다.
 
@@ -185,7 +184,7 @@ role name이 나오면 한 번 더 조회한다.
 
 응답에 `AccessKeyId`, `SecretAccessKey`, `Token`이 보이면 Critical 영향이다. GCP/Azure metadata는 header가 필요한 경우가 많아, 단순 URL fetcher만으로는 token 조회가 막힐 수 있다.
 
-### SVG 업로드 XXE
+### 5. SVG 업로드 XXE
 
 이미지 업로드에서 SVG가 허용되면 XML 파서를 거치는지 확인한다.
 
@@ -206,7 +205,7 @@ role name이 나오면 한 번 더 조회한다.
 
 텍스트가 이미지에 보이지 않아도 후처리 서버가 외부 DTD를 가져가는 Blind 케이스가 있다. SVG 파일명과 payload marker를 매번 바꿔 트리거 시점을 분리한다.
 
-### Blind XXE - OOB DTD fetch
+### 6. Blind XXE - OOB DTD fetch
 
 응답에 노출이 없으면 외부 DTD를 가져가도록 유도한다.
 
@@ -221,7 +220,7 @@ role name이 나오면 한 번 더 조회한다.
 
 Collaborator에 DNS/HTTP 요청이 오면 서버가 외부 엔티티를 해석한 것이다. 이 단계만으로는 파일 읽기까지 입증된 것은 아니므로, 가능하면 아래 exfil까지 확인한다.
 
-### Blind XXE - OOB 데이터 추출
+### 7. Blind XXE - OOB 데이터 추출
 
 외부 서버에서 `xxe.dtd`를 제공한다.
 
@@ -240,7 +239,7 @@ Collaborator에 DNS/HTTP 요청이 오면 서버가 외부 엔티티를 해석�
 
 파라미터 엔티티(`%`)를 다른 엔티티 정의에 쓰려면 외부 DTD 분리가 필요하다. 단일 XML 내부에 모두 넣으면 파서에서 거부되는 경우가 많다.
 
-### Error-based XXE
+### 8. Error-based XXE
 
 상세 XML 에러가 응답에 노출될 때만 보조로 확인한다.
 
@@ -257,7 +256,7 @@ Collaborator에 DNS/HTTP 요청이 오면 서버가 외부 엔티티를 해석�
 
 에러 메시지의 경로에 파일 내용이 섞이면 취약이다. 대부분의 현대 파서는 이 패턴을 막거나 에러를 축약하므로 우선순위는 낮다.
 
-### Office / ZIP 기반 XML
+### 9. Office / ZIP 기반 XML
 
 DOCX/XLSX/PPTX는 내부 XML을 수정해 재압축해야 하므로 운영 점검에서는 SVG보다 느리다. 다만 문서 변환 서버, 미리보기, 색인 기능이 강하게 의심되면 확인한다.
 
@@ -269,13 +268,13 @@ DOCX/XLSX/PPTX는 내부 XML을 수정해 재압축해야 하므로 운영 점�
 5. Collaborator hit 또는 변환 결과물 확인
 ```
 
-### XML Bomb은 기본 사용하지 않기
+### 10. XML Bomb은 기본 사용하지 않기
 
 Billion Laughs 같은 중첩 엔티티 payload는 서비스 가용성에 영향을 줄 수 있다. 실무 진단에서는 직접 실행보다 parser 설정에서 entity expansion limit, DTD 비활성화 여부를 확인하는 방식으로 다룬다.
 
 ---
 
-## 필터 / 우회 매트릭스
+## 우회 매트릭스
 
 | 필터 증상 | 우회 방향 | 예시 |
 | :--- | :--- | :--- |
@@ -384,7 +383,7 @@ http://169.254.169.254/latest/meta-data/
 http://169.254.169.254/latest/meta-data/iam/security-credentials/
 ```
 
-credential이 나오면 별도 안전한 터미널에서 사용 가능성을 확인한다.
+credential이 나오면 승인 범위 안에서 별도 안전한 터미널로 사용 가능성을 확인한다.
 
 ```bash
 AWS_ACCESS_KEY_ID=<AccessKeyId> \
@@ -416,9 +415,14 @@ aws ssm describe-parameters --max-results 10
 
 ## 참고자료
 
+### 공식 및 테스트 가이드
+
 - [OWASP XML External Entity Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html)
 - [OWASP Testing Guide - Testing for XML Injection](https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/07-Testing_for_XML_Injection)
 - [PortSwigger - XML external entity injection](https://portswigger.net/web-security/xxe)
+- [defusedxml (Python)](https://github.com/tiran/defusedxml)
+
+### 커뮤니티 참고 / 도구
+
 - [PayloadsAllTheThings - XXE Injection](https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/XXE%20Injection)
 - [HackTricks - XXE](https://book.hacktricks.xyz/pentesting-web/xxe-xee-xml-external-entity)
-- [defusedxml (Python)](https://github.com/tiran/defusedxml)

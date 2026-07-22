@@ -5,98 +5,103 @@ sidebar_label: 모바일 워크플로우 (인덱스)
 description: 모바일 앱 취약점 진단 점검 항목 - OWASP MASVS / MASTG 및 KISA 모바일 가이드 기반 매핑
 keywords: [mobile pentest, OWASP MASVS, MASTG, KISA, Android, iOS, Frida, Objection]
 slug: /assessment/mobile
+draft: false
 ---
 
-# 모바일 진단 워크플로우
-
-> **이 페이지의 역할**: 모바일 진단 점검 항목 ↔ 개별 문서 매핑 인덱스.
-> 환경 / 우회 / 저장 / 플랫폼 영역 **12개 페이지 작성 완료** (2026-05-14). 표에 "(예정)" 으로 표시된 8개 페이지는 후속 작성 예정 — `_migration-plan.md` Priority 4 참조.
+> 모바일 앱을 처음 받았을 때 어떤 문서부터 열어야 하는지 연결하는 작업 인덱스다. 학습할 때는 `기반 구축 → 보호기법 우회 → 주요 점검` 순서로 진행하고, 실제 프로젝트에서는 점검을 막는 보호기법만 필요한 만큼 우회한다.
 
 ---
 
-## 진단 단계
+## 학습 순서
+
 ```mermaid
 flowchart LR
-    A[1. 환경 준비] --> B[2. 정적 분석]
-    B --> C[3. 동적 분석]
-    C --> D[4. 통신 분석]
-    D --> E[5. 영향 검증]
-    E --> F[6. 증적 정리]
+    A["1. 환경 구축"] --> B["2. 초기 탐색·정적 분석 기반"]
+    B --> C["3. 보호기법 식별·우회"]
+    C --> D["4. 주요 점검 항목"]
+    D --> E["5. 네이티브 분석 심화"]
+    E --> F["6. 결과 해석·증적 정리"]
 ```
 
-| 단계 | Android | iOS |
+### 1. 실습 기반
+
+| 순서 | 문서 | 완료 기준 |
 | :--- | :--- | :--- |
-| **1. 환경 준비** | 루팅된 디바이스 / 에뮬레이터, ADB, Frida 서버 | 탈옥 디바이스, USB 페어링, Frida |
-| **2. 정적 분석** | APK 추출 → apktool / jadx | IPA 추출 → class-dump, Hopper |
-| **3. 동적 분석** | Frida, Objection 후킹 | Frida, Cycript |
-| **4. 통신 분석** | Burp + 시스템 CA 트러스트 | Burp + 프로파일 설치 + SSL Pinning 우회 |
-| **5. 영향 검증** | 데이터 저장소 / 인증 / 권한 검증 | 동일 |
-| **6. 증적 정리** | 재현 로그 + 디바이스/OS 버전 정보 정리 | 동일 |
+| 1 | [Android 환경 구축](./setup-android) 또는 [iOS 환경 구축](./setup-ios) | 단말 연결, 프록시 기준선, 분석 대상 확보 |
+| 2 | [초기 정보 탐색 루틴](./initial-analysis-routine) | 기준 정보, 실행·프록시 기준선, 주요 파일과 보호기법 분기 정리 |
+| 3 | [정적 분석](./static-analysis) | APK/IPA 구조, 설정, 주요 클래스와 호출 지점 파악 |
+| 4 | [Frida 후킹 스크립트](./frida-scripts) | attach/spawn, 클래스 탐색, 인자·반환값 관찰 |
+
+Android와 iOS 환경 구축 문서는 합치지 않는다. 필요한 단말 준비, 인증서 신뢰, 앱 추출 방식과 트러블슈팅이 서로 다르기 때문이다.
+
+### 2. 보호·우회
+
+| 현재 막힘 | 먼저 볼 문서 |
+| :--- | :--- |
+| HTTPS 요청이 앱에서만 보이지 않음 | [SSL Pinning 우회](./ssl-pinning-bypass) |
+| 루팅·탈옥 안내 후 앱이 종료됨 | [루팅 탐지 우회](./root-detection-bypass), [탈옥 탐지 우회](./jailbreak-detection-bypass) |
+| Frida attach/spawn 직후 종료됨 | [디버거/Frida 탐지 우회](./anti-debug-bypass) |
+| 수정·재서명한 앱이 실행되지 않음 | [앱 위변조 / 재패키징 점검](./app-tampering) |
+
+학습할 때는 각 보호기법을 모두 실습한다. 실제 프로젝트에서는 정적 분석과 기준선 관찰로 적용 여부를 먼저 확인하고, 본 점검을 막는 보호기법만 제한적으로 우회한다.
+
+### 3. 고객사 주요 점검
+
+| 영역 | Android | iOS / 공통 |
+| :--- | :--- | :--- |
+| 데이터 저장 | [Android 데이터 저장소](./data-storage-android) | [iOS 데이터 저장소](./data-storage-ios) |
+| 통신 | [인증서 검증 및 평문 통신](./certificate-validation) | [SSL Pinning 우회](./ssl-pinning-bypass) |
+| 플랫폼 연동 | [Export된 컴포넌트](./exported-components), [Deep Link / Intent](./deeplink-intent) | [Deep Link / Intent](./deeplink-intent), [WebView](./webview-issues) |
+| 인증·암호 | [인증 및 세션](./auth-mobile), [로컬 인증](./local-auth-bypass) | [암호화 키 관리](./crypto-keys) |
+| 코드·프라이버시 | [코드·의존성 품질](./code-quality) | [개인정보 흐름·노출](./privacy-leakage) |
+
+### 4. 네이티브 심화
+
+기본 점검과 Java·Kotlin·Objective-C·Swift 계층의 분석으로 원인을 찾지 못했을 때 [IDA Pro 네이티브 분석](./ida-pro-analysis)을 연다. JNI 함수, 자체 `.so`, iOS Framework, Native 파서·암호 루틴처럼 네이티브 계층에 진입해야 하는 대상을 마지막 심화 단계로 둔다.
 
 ---
 
-## 점검 항목 ↔ 페이지 매핑
+## MASVS 문서 매핑
+
+OWASP MASTG 2.x는 `MASVS Control → MASWE Weakness → MASTG Test` 관계로 테스트 근거를 연결한다. 아래 표는 문서 탐색용 상위 매핑이며, 세부 MASWE/MASTG ID는 각 문서를 정리할 때 검증해 추가한다.
+
 | MASVS 카테고리 | 설명 | 관련 페이지 |
 | :--- | :--- | :--- |
 | **MASVS-STORAGE** | 안전한 데이터 저장 | [data-storage-android](./data-storage-android), [data-storage-ios](./data-storage-ios) |
-| **MASVS-CRYPTO** | 암호화 키 관리 | `crypto-keys` (예정) |
-| **MASVS-AUTH** | 인증 및 세션 관리 | `auth-mobile` (예정) |
-| **MASVS-NETWORK** | 안전한 네트워크 통신 | [ssl-pinning-bypass](./ssl-pinning-bypass), `certificate-validation` (예정) |
-| **MASVS-PLATFORM** | 플랫폼 보안 메커니즘 사용 | [webview-issues](./webview-issues), [deeplink-intent](./deeplink-intent) |
-| **MASVS-CODE** | 안전한 코드 작성 | [static-analysis](./static-analysis), `code-quality` (예정) |
-| **MASVS-RESILIENCE** | 무결성/탬퍼링 방어 | [setup-android](./setup-android), [setup-ios](./setup-ios), [root-detection-bypass](./root-detection-bypass), [jailbreak-detection-bypass](./jailbreak-detection-bypass), [anti-debug-bypass](./anti-debug-bypass) |
-| **MASVS-PRIVACY** | 개인정보 보호 | `privacy-leakage` (예정) |
-| **(공용 도구)** | Frida 후킹 스크립트 모음 | [frida-scripts](./frida-scripts) |
+| **MASVS-CRYPTO** | 암호화 키 관리 | [crypto-keys](./crypto-keys) |
+| **MASVS-AUTH** | 인증 및 세션 관리 | [auth-mobile](./auth-mobile), [local-auth-bypass](./local-auth-bypass) |
+| **MASVS-NETWORK** | 안전한 네트워크 통신 | [ssl-pinning-bypass](./ssl-pinning-bypass), [certificate-validation](./certificate-validation) |
+| **MASVS-PLATFORM** | 플랫폼 보안 메커니즘 사용 | [webview-issues](./webview-issues), [deeplink-intent](./deeplink-intent), [exported-components](./exported-components) |
+| **MASVS-CODE** | 안전한 코드 작성 | [static-analysis](./static-analysis), [code-quality](./code-quality) |
+| **MASVS-RESILIENCE** | 무결성·분석 저항성 | [root-detection-bypass](./root-detection-bypass), [jailbreak-detection-bypass](./jailbreak-detection-bypass), [anti-debug-bypass](./anti-debug-bypass), [app-tampering](./app-tampering) |
+| **MASVS-PRIVACY** | 개인정보 보호 | [privacy-leakage](./privacy-leakage) |
+| **분석 기반** | 환경·도구 준비 | [setup-android](./setup-android), [setup-ios](./setup-ios), [initial-analysis-routine](./initial-analysis-routine), [static-analysis](./static-analysis), [frida-scripts](./frida-scripts) |
 
 ---
 
-## 점검 항목 ↔ 페이지 매핑
-> 회사 가이드 확보 후 정확한 항목명으로 갱신할 것.
-
-| 분류 | 점검 항목 | 관련 페이지 |
-| :--- | :--- | :--- |
-| 환경 설정 | Android 환경 구성 | [setup-android](./setup-android) |
-| 환경 설정 | iOS 환경 구성 | [setup-ios](./setup-ios) |
-| 정적 분석 | APK / IPA 추출 및 디컴파일 | [static-analysis](./static-analysis) |
-| 데이터 저장 | SharedPreferences / Keystore | [data-storage-android](./data-storage-android) |
-| 데이터 저장 | Keychain / plist / NSUserDefaults | [data-storage-ios](./data-storage-ios) |
-| 데이터 저장 | 로컬 DB (SQLite/Realm) 평문 저장 | [data-storage-android](./data-storage-android) |
-| 통신 보안 | 평문 통신 (HTTP) | `certificate-validation` (예정) |
-| 통신 보안 | SSL Pinning | [ssl-pinning-bypass](./ssl-pinning-bypass) |
-| 무결성 | 루팅/탈옥 탐지 | [root-detection-bypass](./root-detection-bypass), [jailbreak-detection-bypass](./jailbreak-detection-bypass) |
-| 무결성 | 디버거 / Frida 탐지 | [anti-debug-bypass](./anti-debug-bypass) |
-| 무결성 | 앱 위변조 / 재패키징 | `app-tampering` (예정) |
-| 인증 | 로컬 인증 (지문/Face ID) 우회 | `local-auth-bypass` (예정) |
-| 플랫폼 | WebView 취약점 | [webview-issues](./webview-issues) |
-| 플랫폼 | Deep Link / Intent | [deeplink-intent](./deeplink-intent) |
-| 플랫폼 | Export된 컴포넌트 | `exported-components` (예정) |
-
----
-
-## 환경 설정 — 작업 시작 전 체크
-
-상세 절차는 다음 페이지 참조:
-
-- **Android** — [setup-android](./setup-android) (ADB / Frida 16.x / Burp 시스템 CA Magisk 표준 / APK 추출 / 트러블슈팅)
-- **iOS** — [setup-ios](./setup-ios) (palera1n / Dopamine 매칭표 / Sileo / Frida / Burp 프로파일+CA 신뢰 / IPA 추출)
-
-빠른 검증 체크리스트 (4개 모두 통과하면 환경 구축 완료):
+## 작업 전 확인
 
 | 검증 항목 | Android | iOS |
 | :--- | :--- | :--- |
-| **단말 인식** | `adb devices` 가 `device` 상태 | 탈옥 단말 + Sileo 정상 실행 |
-| **후킹 도구** | `frida-ps -U` 가 프로세스 목록 출력 | 동일 (USB 시 `iproxy 27042 27042` + `-H 127.0.0.1`) |
-| **HTTPS 캡처** | 브라우저에서 평문 캡처 + 인증서 경고 없음 | 동일 — "인증서 신뢰 설정" 토글 확인 (필수) |
-| **앱 핸들링** | APK 추출 / 설치 가능 (`adb install`) | IPA 복호화 추출 (`frida-ios-dump`) |
+| **대상 기록** | 단말 모델, Android/API, ABI, 앱 버전 | 단말 모델·SoC, iOS, 앱 버전, 탈옥 여부 |
+| **단말 인식** | `adb devices`가 `device` 상태 | USB 페어링 후 Frida 또는 `idevice_id`로 확인 |
+| **프록시 기준선** | 브라우저 HTTP/HTTPS가 Burp에 보임 | Safari HTTP/HTTPS가 Burp에 보임 |
+| **후킹 준비** | 적용 환경이면 `frida-ps -U` 성공 | 탈옥 또는 debuggable 환경이면 `frida-ps -U` 성공 |
+| **분석 대상** | base/split APK 경로와 추출 방법 확인 | 고객 제공 IPA 또는 승인된 추출 방법 확인 |
 
-> 점검 대상 앱이 SSL Pinning / Root·탈옥 탐지 / Frida 탐지로 차단되면 → [ssl-pinning-bypass](./ssl-pinning-bypass) / [root-detection-bypass](./root-detection-bypass) / [jailbreak-detection-bypass](./jailbreak-detection-bypass) / [anti-debug-bypass](./anti-debug-bypass) 페이지로 이동.
+브라우저 기준선은 정상인데 점검 대상 앱만 실패하면 환경 문제로 단정하지 않는다. Pinning, 루팅·탈옥 탐지, Frida 탐지 여부를 해당 보호·우회 문서에서 확인한다.
 
 ---
 
 ## 참고자료
 
+### 공식 및 테스트 가이드
+
 - [OWASP MASVS](https://mas.owasp.org/MASVS/)
 - [OWASP MASTG (Testing Guide)](https://mas.owasp.org/MASTG/)
 - [Frida 공식 문서](https://frida.re/docs/home/)
+
+### 도구 프로젝트
+
 - [Objection (Frida-based)](https://github.com/sensepost/objection)
 - [MobSF](https://github.com/MobSF/Mobile-Security-Framework-MobSF)

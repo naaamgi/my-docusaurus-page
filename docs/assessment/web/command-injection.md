@@ -1,12 +1,11 @@
 ---
-sidebar_position: 12
+sidebar_position: 21
 title: OS Command Injection
 description: 웹 진단 - OS Command Injection 컨텍스트 판단, 메타문자, Blind/OOB 확인, 우회 노트
 keywords: [Command Injection, OS Command, RCE, Blind, OOB, 입력값 검증, OWASP A05]
 draft: false
+toc_max_heading_level: 3
 ---
-
-# 운영체제 명령어 삽입 (OS Command Injection)
 
 ## 점검 목적
 
@@ -34,7 +33,7 @@ draft: false
 
 ## 진단 절차
 
-### Step 1. 진입점 식별
+#### Step 1. 진입점 식별
 
 단순 파라미터 fuzz보다 OS 명령 호출 가능성이 높은 기능을 먼저 본다.
 
@@ -45,7 +44,7 @@ draft: false
 - 파일명/메타데이터: 업로드 파일명, 압축 내부 파일명, EXIF/문서 메타데이터
 - 관리자 도구: 로그 조회, 백업, 배치 실행, 서버 상태 진단
 
-### Step 2. Command Injection 진단 루틴
+#### Step 2. Command Injection 진단 루틴
 
 Burp Repeater에서 정상 입력을 baseline으로 고정한 뒤, **메타문자 확인 → 출력 확인 → 지연 확인 → 승인된 OOB 확인** 순서로 좁힌다.
 
@@ -112,7 +111,7 @@ Windows 후보는 `&`를 먼저 본다.
 | 메타문자는 실패, `--help`는 반영 | Argument Injection 후보 | 호출되는 바이너리와 위험 옵션 여부 확인 |
 | 특수문자만 500 발생 | 단순 예외 가능성 | stderr 노출, 필터 차단, 타입 검증 여부 분리 |
 
-### Step 3. 컨텍스트별 빠른 선택
+#### Step 3. 컨텍스트별 빠른 선택
 
 입력값이 어떤 명령 위치에 들어갈지 먼저 가정하고 payload를 고른다.
 
@@ -126,7 +125,7 @@ Windows 후보는 `&`를 먼저 본다.
 | 옵션 위치 | `--help`, `--version` | 입력값이 명령 옵션으로 해석되는지 |
 | 비동기 작업 | `;sleep 3` 또는 승인된 OOB 마커 | 즉시 응답이 아니라 처리 완료 시점 영향 |
 
-### Step 4. OS / Shell 식별
+#### Step 4. OS / Shell 식별
 
 취약 가능성이 보이면 운영 영향이 낮은 명령으로 환경만 식별한다.
 
@@ -137,7 +136,7 @@ Windows 후보는 `&`를 먼저 본다.
 | PowerShell | `; whoami`, `; $PSVersionTable.PSVersion` | PowerShell이 실제 인터프리터인지 확인 |
 | 셸 없음 | `--help`, `--version` | 외부 바이너리 옵션으로만 해석되는지 확인 |
 
-### Step 5. 영향 확인
+#### Step 5. 영향 확인
 
 취약 확정에는 인터랙티브 셸이나 대량 파일 조회보다 **최소 증거**가 좋다.
 
@@ -153,7 +152,7 @@ Windows 후보는 `&`를 먼저 본다.
 
 아래 payload는 컨텍스트가 잡혔을 때 사용한다. 운영 환경에서는 짧고 가벼운 명령부터 확인하고, 파일 조회/외부 통신/장시간 지연은 사전 협의 범위에서만 사용한다.
 
-### 메타문자 / 명령 분리
+### 1. 메타문자 / 명령 분리
 
 정상 입력 뒤에 명령 구분자를 붙여 셸 문자열로 이어지는지 확인한다.
 
@@ -175,7 +174,7 @@ Windows는 `;`보다 `&` 계열을 먼저 본다.
 
 `echo ci_test`가 응답, 변환 로그, 관리자 화면에 보이면 명령 분리가 된 것으로 본다.
 
-### In-band 출력 확인
+### 2. In-band 출력 확인
 
 마커가 잡힌 뒤에만 OS 식별용 최소 명령으로 넘어간다.
 
@@ -196,7 +195,7 @@ stdout만 노출되고 stderr는 버려지는 경우가 있다. 오류만 의심
 & whoami 2>&1
 ```
 
-### Blind Time-based
+### 3. Blind Time-based
 
 결과 출력이 없을 때 사용한다. 네트워크 지연과 섞이지 않게 짧게 시작한다.
 
@@ -210,7 +209,7 @@ stdout만 노출되고 stderr는 버려지는 경우가 있다. 오류만 의심
 
 판정은 한 번의 지연이 아니라 **baseline 정상 / False 비지연 / True 지연** 조합이 반복될 때 한다.
 
-### OOB 확인
+### 4. OOB 확인
 
 비동기 처리이거나 출력/지연으로 판단이 어려울 때만 사용한다. 외부 통신 로그가 고객사 보안 장비에 남을 수 있으므로 사전 승인된 도메인만 쓴다.
 
@@ -222,7 +221,7 @@ stdout만 노출되고 stderr는 버려지는 경우가 있다. 오류만 의심
 
 콜백이 오면 payload별 unique marker, 요청 시각, 기능명, source IP를 같이 기록한다. 명령 결과를 외부 도메인에 싣는 방식은 운영 진단에서 기본 사용하지 않는다.
 
-### Argument Injection
+### 5. Argument Injection
 
 셸 메타문자가 안 먹어도 입력값이 외부 명령의 옵션으로 들어가면 별도 취약점이 될 수 있다. 먼저 안전한 옵션이 반영되는지 본다.
 
@@ -242,7 +241,7 @@ stdout만 노출되고 stderr는 버려지는 경우가 있다. 오류만 의심
 
 안전 옵션이 반영되면 호출 바이너리와 위험 옵션을 따로 분석한다. 바로 실행형 옵션이나 파일 쓰기 옵션으로 넘어가지 않는다.
 
-### 파일명 / 업로드 처리
+### 6. 파일명 / 업로드 처리
 
 파일명은 저장 시점보다 변환/미리보기/압축 해제/백신 검사 같은 후처리에서 발현되는 경우가 많다.
 
@@ -255,7 +254,7 @@ test%0aecho%20ci_test.jpg
 
 확인은 업로드 응답만 보지 말고 썸네일 생성, 상세 보기, 관리자 검수, 다운로드, 변환 로그까지 이어서 본다.
 
-### 필터 우회
+## 우회 매트릭스
 
 필터가 보이면 차단된 문자를 기준으로 좁혀간다.
 
@@ -288,8 +287,6 @@ commix -r request.txt -p host --batch --technique=time
 ```bash
 --os-shell
 --os-pwn
---reverse-tcp
---alter-shell
 ```
 
 자동화 결과는 최종 판정 근거가 아니라 수동 재현을 돕는 참고 자료로만 본다.
@@ -392,25 +389,30 @@ Windows 후보는 아래처럼 본다.
 
 클라우드 metadata는 role name, token 발급 가능 여부, 임시 credential 사용 가능성까지 확인한다.
 
-### Controlled Shell 확인
+### 실행 안정성 확인
 
-명령 실행이 안정적이고 outbound 연결이 가능하면 controlled shell로 조작 가능 범위를 확인한다.
+명령 실행이 안정적인지 확인할 때도 인터랙티브 셸보다 짧고 되돌릴 필요 없는 명령을 우선한다.
 
 ```text
 ;which bash nc python3 perl php
-;bash -c 'echo shell_ready'
+;sh -c 'echo cmd_ready'
 ;python3 -c 'import os;print(os.getuid())'
 ```
 
-셸 획득 후에는 현재 사용자 권한, 파일 접근, 내부망 접근, credential 사용 가능성을 확인한다.
+운영 진단에서는 reverse shell, 지속 세션, 장시간 프로세스 실행을 기본 확인 항목으로 두지 않는다. 현재 사용자 권한, 파일 접근, 내부망 접근, credential 사용 가능성은 짧은 단발 명령으로 확인한다.
 
 ---
 
 ## 참고자료
 
+### 공식 및 테스트 가이드
+
 - [OWASP Command Injection](https://owasp.org/www-community/attacks/Command_Injection)
 - [OWASP OS Command Injection Defense Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html)
 - [PortSwigger - OS command injection](https://portswigger.net/web-security/os-command-injection)
+
+### 커뮤니티 참고 / 도구
+
 - [PayloadsAllTheThings - Command Injection](https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Command%20Injection)
 - [HackTricks - Command Injection](https://book.hacktricks.xyz/pentesting-web/command-injection)
 - [commix 공식 문서](https://github.com/commixproject/commix/wiki)

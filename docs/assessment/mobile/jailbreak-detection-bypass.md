@@ -1,319 +1,462 @@
 ---
 sidebar_position: 8
 title: 탈옥 탐지 우회
-description: 모바일 진단 - iOS 탈옥 탐지 우회 (Liberty Lite / A-Bypass / Shadow / Frida 후킹) + 흔한 탐지 항목 + 판정 기준
-keywords: [Jailbreak Detection, Bypass, Liberty Lite, A-Bypass, Shadow, Choicy, Frida, NSFileManager, dlopen, fork, MASVS-RESILIENCE, iOS]
+description: iOS 탈옥 단말 기준선부터 탐지 신호 식별, 최소 범위 우회, App Attest 구분, 결과 판정까지 이어지는 실무 흐름
+keywords: [Jailbreak Detection, Bypass, Rootless, Rootful, Shadow, Choicy, Frida, NSFileManager, App Attest, DeviceCheck, MASVS-RESILIENCE, iOS]
+toc_max_heading_level: 3
 draft: false
 ---
 
-# 탈옥 탐지 우회
-> 앱이 탈옥 단말에서 실행을 거부할 때 우회. 점검자 입장에선 **점검 환경의 일부** + 점검 결과로 "탐지 적용 여부 + 우회 가능성" 평가.
-> Android 의 루팅 탐지와 동일한 구조 — 단일 신호 의존 / 클라이언트만 검증은 미흡.
+> 탈옥 단말에서 앱 실행이나 특정 기능이 차단될 때 사용한다. 목표는 탈옥 흔적을 전부 숨기는 것이 아니라 **실제 탐지 신호를 찾고 필요한 범위만 우회해 분석 경로를 확보하는 것**이다.
 
-## 점검 개요
+## 사용 시점
 
-| 항목 | 내용 |
-| :--- | :--- |
-| **분류** | OWASP MASVS-RESILIENCE-1 / MASTG-TEST-0049, 0058 |
-| **CWE** | [CWE-693: Protection Mechanism Failure](https://cwe.mitre.org/data/definitions/693.html) |
-| **영향도** | 🟡 (단독) — 다른 결함과 결합 시 점검 자체가 차단됨 |
-| **점검 난이도** | 하 (표준 트윅) ~ 상 (Native 다중 + 무결성 + DeviceCheck/AppAttest 결합) |
-| **예상 점검 시간** | 30분 ~ 2시간 |
+- 탈옥한 iPhone 또는 iPad에서 앱이 시작 직후 종료될 때
+- 로그인은 가능하지만 인증, 결제, 이체 같은 특정 기능만 차단될 때
+- 정적 분석에서 `isJailbroken`, `fileExistsAtPath:`, `fork`, dyld 검사가 발견됐을 때
+- Shadow 같은 트윅 적용 전·후 결과를 비교해야 할 때
+- Frida 연결 이후에만 종료되어 탈옥 탐지와 계측 탐지를 구분해야 할 때
+- DeviceCheck 또는 App Attest가 실제 서버 정책에 사용되는지 확인해야 할 때
 
----
+탈옥 탐지 우회는 동적 분석을 위한 환경 구성에 가깝다. 우회 도구로 앱이 열렸다는 사실만으로 취약점을 확정하지 않는다.
 
-## 점검 목적
+## 점검 원칙
 
-iOS 탈옥 탐지는 (1) 적용 여부, (2) 어떤 신호를 쓰는지, (3) 표준 트윅 / Frida 로 우회 가능한지 확인. **`NSFileManager fileExistsAtPath:` 한 함수만 검사**하는 패턴은 단일 후킹으로 무력화 → MASVS-RESILIENCE 미흡. **DeviceCheck / App Attest (서버 사이드)** + Native 다중 신호가 권장.
+- 허가된 앱, 테스트 계정, 고객사가 승인한 단말에서만 수행한다.
+- 정상 단말과 탈옥 단말에서 같은 앱 버전과 기능을 비교한다.
+- jailbreak 종류, rootful·rootless 방식, tweak injection 계층을 기록한다.
+- 첫 후킹은 원본 반환값을 바꾸지 않는 관찰용으로 만든다.
+- 앱에서 실제 확인한 클래스, selector, 경로, Native 함수만 좁게 변경한다.
+- 탈옥 탐지, Frida·디버거 탐지, 재서명 탐지, 서버 앱 무결성 검증을 구분한다.
+- 앱 화면뿐 아니라 원래 차단된 기능의 서버 응답까지 재검증한다.
 
-> **다른 페이지와 영역 분리**
-> - Android 루팅 탐지 우회 → `root-detection-bypass.md`
-> - Frida / 디버거 탐지 → `anti-debug-bypass.md`
-> - SSL Pinning 우회 → `ssl-pinning-bypass.md`
-> - Frida 기본 후킹 패턴 → `frida-scripts.md`
-> - 탐지 코드 위치 식별 (Hopper / class-dump) → `static-analysis.md`
+## 탐지 유형
 
----
+| 유형 | 흔한 단서 | 확인 위치 | 첫 접근 |
+| :--- | :--- | :--- | :--- |
+| 파일·디렉터리 | Cydia·Sileo·apt·SSH·tweak 경로 | `NSFileManager`, `access`, `stat`, `fopen` | 실제 조회 경로 관찰 |
+| sandbox 이탈 | 컨테이너 밖 파일 생성 성공 | `write`, `createFileAtPath:` | 생성·삭제 흐름과 오류 확인 |
+| URL Scheme | `cydia://`, `sileo://` | `canOpenURL:`과 `Info.plist` | 등록 scheme와 원본 결과 확인 |
+| 프로세스·syscall | `fork`, `getppid`, `sysctl`, process 목록 | libc·syscall 래퍼 | 호출자와 반환값 확인 |
+| 로드 이미지 | Substrate, Substitute, ElleKit, Frida 관련 dylib | dyld API, 환경 변수 | 탈옥·계측 탐지 분리 |
+| rootless 경로 | `/var/jb`, `/private/preboot/...` 아래 흔적 | 파일·symlink·mount 검사 | 현재 탈옥 구성 기준 확인 |
+| 앱 전용 로직 | `isJailbroken`, RASP SDK 래퍼 | Objective-C·Swift·Native | 최종 boolean과 호출 시점 확인 |
+| 서버 신뢰 신호 | DeviceCheck token, App Attest assertion | 앱 요청 코드와 백엔드 | challenge·검증·실패 정책 확인 |
 
-## 유형 구분 — 흔한 탈옥 탐지 신호
-
-| 신호 | 검사 코드 예시 | 비고 |
-| :--- | :--- | :--- |
-| **탈옥 흔적 파일 존재** | `[NSFileManager fileExistsAtPath:@"/Applications/Cydia.app"]` | 가장 흔함 — 한 줄 후킹 우회 |
-| **`/etc/apt`, `/private/var/lib/apt` 디렉토리** | 동일 | 동일 |
-| **시스템 파일 쓰기 가능** | `/private/jbtest.txt` 에 쓰기 시도 | NSFileManager 후킹 |
-| **`fork()` 성공 여부** | 탈옥 단말은 `fork()` 가 성공 (sandbox 우회) | Native 후킹 필요 |
-| **dyld 로 의심 라이브러리 검사** | `_dyld_image_count`, `_dyld_get_image_name` | Native 후킹 |
-| **`/usr/sbin/sshd` 같은 바이너리 존재** | NSFileManager + access(2) 검사 | 동일 |
-| **URL Scheme 검사** | `cydia://`, `sileo://` 가 열리는지 (`canOpenURL:`) | UIApplication 후킹 |
-| **Process / dyld 모듈 검사** | `dyld_image_count` 로 MobileSubstrate 등 검사 | Native 후킹 |
-| **DeviceCheck / App Attest** | Apple API 서버 사이드 검증 | 서버 검증 — 클라이언트 후킹 불가 |
+같은 앱이 여러 신호를 하나의 래퍼에 모으거나 실행 시점마다 다른 검사를 사용할 수 있다. 클래스 이름이나 경로 하나만 보고 전체 탐지 강도를 판단하지 않는다.
 
 ---
 
 ## 진단 절차
 
-### Step 1. 탐지 적용 여부 확인
+#### Step 1. 단말 기준선
 
-```
-1) setup-ios.md 의 탈옥 단말 환경 셋업
-2) 점검 대상 앱 실행
-3) 결과:
-   - 정상 실행                        → 탐지 미적용 또는 우회 가능
-   - 즉시 종료 / "탈옥된 기기" 메시지   → 탐지 적용
-   - 일부 기능만 차단                  → 부분 탐지
-```
+[iOS 진단 환경 구성](setup-ios.md)에 따라 다음 항목을 먼저 기록한다.
 
-### Step 2. 탐지 위치 식별
-`static-analysis.md` 의 class-dump / Hopper 검색 키워드:
+- iOS 버전과 단말 모델
+- 앱 버전, Bundle ID, IPA 또는 Mach-O SHA-256
+- jailbreak 도구와 버전
+- rootful·rootless 여부와 `/var/jb` 존재 여부
+- Substrate, Substitute, ElleKit 같은 injection 계층
+- Frida, Shadow, Choicy와 적용한 다른 tweak 버전
 
-```
-정적 검색 키워드:
-  - "isJailbroken", "isJailBroken", "jailbreak", "jailbroken"
-  - "Cydia", "Sileo", "MobileSubstrate", "Substitute"
-  - "fileExistsAtPath:", "@/Applications/Cydia.app"
-  - "@/etc/apt", "@/private/var/lib/apt"
-  - "fork", "_dyld", "dlopen"
-  - "canOpenURL:", "cydia://", "sileo://"
-  - "DeviceCheck", "AppAttest"             ← 서버 사이드 검증 (강력)
+탈옥 단말에서 확인할 수 있는 최소 기준값:
+
+```bash
+uname -a
+ls -ld /var/jb /private/preboot 2>/dev/null
+ps aux | grep -iE 'frida|substrate|substitute|ellekit'
+frida-ps -Uai
 ```
 
-### Step 3. 우회 시도
-(1) Liberty Lite / A-Bypass / Shadow → (2) Choicy 로 트윅 비활성 → (3) Objection / Frida 표준 → (4) 자체 구현 후킹 → (5) Native 후킹 → (6) DeviceCheck / App Attest 결합 시 사실상 불가.
+#### Step 2. 정상·탈옥 단말 비교
 
-### Step 4. 우회 후 검증
-
-- 앱 정상 실행 + 차단된 기능도 동작
-- Frida 콘솔에 우회 로그 정상 출력
-
----
-
-## 페이로드 / 우회 케이스
-
-### 케이스 1: Liberty Lite / A-Bypass / Shadow
-**언제 쓰는지**: 점검 초기 / 일반 앱. 시스템 레벨에서 탈옥 흔적을 숨겨 앱 후킹 없이 우회.
-
-| 트윅 | 호환 iOS | 비고 |
+| 관찰 결과 | 현재 가설 | 다음 작업 |
 | :--- | :--- | :--- |
-| **Liberty Lite** | iOS 11 ~ 14 | 옛 표준, iOS 15+ 부분 동작 |
-| **A-Bypass** | iOS 14 ~ 15 | rootless 미지원 |
-| **Shadow** (오픈소스) | iOS 11 ~ 17 | rootless 호환, 가장 광범위 |
-| **Choicy** | 전 버전 | 트윅 자체를 앱별로 비활성 (일부 탈옥 탐지가 트윅 유무를 검사할 때) |
+| 두 단말 모두 정상 | 탐지 미적용 또는 해당 흐름에서 미사용 | 민감 기능과 재실행 시점 확인 |
+| 탈옥 단말만 시작 차단 | 시작 구간의 로컬 탐지 또는 서버 판정 | 메시지 시각과 crash log 수집 |
+| 특정 기능만 차단 | 기능 직전 재검사 또는 서버 정책 | 같은 기능의 요청·응답 비교 |
+| Frida 연결 후에만 종료 | 계측·디버거 탐지 가능 | [Anti-debug 우회](anti-debug-bypass.md)로 분리 |
+| 재서명본만 종료 | 서명·프로비저닝·App Attest 가능 | [앱 위변조](app-tampering.md)로 분리 |
 
-**Shadow 적용 (iOS 17 권장):**
+직접 실행 상태에서 앱이 원래 정상인지 먼저 확인한다. 네트워크 장애, 만료된 테스트 계정, 호환되지 않는 iOS 버전을 탈옥 탐지로 오해하지 않는다.
 
-```
-1) Sileo → Sources → Add → https://ios.jjolano.me
-2) Shadow 설치
-3) 설정 → Shadow → 점검 대상 앱 활성화
-4) 앱 재실행
-```
+#### Step 3. 로그·크래시 연결
 
-**판정**: Shadow 적용 후 앱 정상 동작이면 표준 신호 (파일 존재 / canOpenURL) 만 사용 → 미흡 보고. 여전히 차단되면 케이스 2 ~ 4 로.
-
-### 케이스 2: Choicy 로 트윅 자체 무력화
-**언제 쓰는지**: 일부 앱은 **트윅의 존재 자체** 를 검사 (`MobileSubstrate.dylib` 가 로드됐는지). Shadow / Liberty 가 오히려 탐지될 수 있음 — Choicy 로 점검 대상 앱에 트윅 미적용 → 그 후 Frida 만으로 진행.
-
-```
-1) Sileo → Choicy 설치
-2) 설정 → Choicy → 점검 대상 앱 → "Tweak Injection" Disabled
-3) 그 후 Frida 만으로 우회 (케이스 3)
-```
-
-### 케이스 3: Objection 자동 우회
+macOS Console 또는 Xcode Devices and Simulators에서 대상 프로세스의 로그와 crash report를 확인한다. 탈옥 단말 shell을 사용할 수 있다면 앱 실행 시각과 함께 시스템 로그를 좁힌다.
 
 ```bash
-objection -g com.target.app explore
-> ios jailbreak disable
+log stream --style compact --predicate 'process == "TargetApp"'
 ```
 
-→ 흔한 탈옥 탐지 함수 (`fileExistsAtPath:`, `canOpenURL:`, `fork`) 일괄 후킹.
+**결과에서 볼 항목:** 차단 문구, 예외·signal, 종료를 호출한 모듈, RASP 이름, 서버 오류 코드, App Attest·DeviceCheck 오류를 확인한다. `SIGABRT`만으로 원인을 탈옥 탐지라고 결론 내리지 않는다.
 
-**판정**: 적용 후 앱 정상 동작이면 표준 패턴. 안 먹으면 케이스 4 (자체 구현 후킹).
+#### Step 4. 정적 단서 수집
 
-### 케이스 4: Frida 통합 스크립트
-**언제 쓰는지**: Shadow + Objection 으로도 안 되는 케이스. 정적 분석에서 자체 구현 탐지 / Native 탐지 보임.
+[정적 분석](static-analysis.md)에서 문자열의 사용처와 호출자를 따라간다.
+
+```bash
+rg -n 'isJailbroken|isJailBroken|Cydia|Sileo|/var/jb|/private/preboot|fileExistsAtPath|canOpenURL|fork|_dyld|AppAttest|DCDevice' work
+strings -a Payload/Target.app/Target | grep -iE 'jail|cydia|sileo|/var/jb|appattest|devicecheck'
+otool -L Payload/Target.app/Target
+```
+
+확인할 항목은 다음과 같다.
+
+- 앱 자체 래퍼와 최종 boolean 반환 지점
+- 검사 시점이 시작 한 번인지 민감 기능마다 반복되는지
+- Objective-C selector가 남아 있는지 Swift·Native로 내려가는지
+- rootful 경로만 보는지 rootless 흔적까지 포함하는지
+- 차단 화면이 로컬 분기인지 서버 응답에 의한 것인지
+- App Attest assertion 또는 DeviceCheck token이 어떤 요청과 연결되는지
+
+#### Step 5. 원본 반환값 관찰
+
+[Frida 후킹 실무](frida-scripts.md)의 순서에 따라 확인한 메서드만 attach한다. 호출 시각, 인자 형식, 원본 반환값을 기록하고 그대로 반환한다. 앱 차단과 후킹 로그의 시각이 일치해야 유효한 후보로 본다.
+
+#### Step 6. 최소 범위 우회
+
+| 확인된 상황 | 우선 시도 | 범위 |
+| :--- | :--- | :--- |
+| 흔한 artifact 검사 가능성 | Shadow 단독 비교 | 대상 앱 하나 |
+| tweak 충돌 또는 injection 탐지 | Choicy로 다른 tweak 정리 | 대상 앱 하나 |
+| 구현 미확인 | Objection smoke test | 한 세션 |
+| 앱 전용 boolean 확인 | 해당 selector 반환값만 변경 | 단일 메서드 |
+| 특정 경로 확인 | 그 경로 결과만 변경 | 정확히 일치하는 경로 |
+| Native 검사 확인 | 심볼·모듈·호출자 관찰 후 전용 후킹 | 단일 함수·호출자 |
+| 서버 신뢰 신호 확인 | 정상·탈옥 단말 요청 비교 | 승인된 기능·계정 |
+
+변경을 한꺼번에 적용하지 않는다. 하나씩 적용하고 원래 상태로 되돌린 뒤 같은 행동을 반복한다.
+
+#### Step 7. 보호 기능 재검증
+
+- 우회 전 차단됐던 같은 화면과 기능이 우회 후 열리는가
+- 후킹 로그와 기능 실행 시각이 일치하는가
+- tweak 또는 스크립트를 끄면 원래 상태로 돌아가는가
+- 앱 재시작, 백그라운드 복귀, 재로그인 뒤에도 결과가 같은가
+- 서버가 민감 작업을 실제로 승인했는가
+- 다른 인증·권한 검사가 그대로 동작하는가
+
+---
+
+## 우회 노트
+
+### Shadow·Choicy
+
+Shadow는 현대 iOS jailbreak 환경을 대상으로 하는 커뮤니티 우회 tweak다. jailbreak 종류, iOS 버전, injection library와 앱 구현에 따라 결과가 달라지며 모든 앱에서 동작한다고 가정하지 않는다.
+
+```text
+1. 현재 앱이 직접 실행되는지 기준선 기록
+2. 다른 우회 tweak를 끈 상태에서 Shadow만 대상 앱에 적용
+3. 앱 완전 종료 후 같은 화면과 기능 재실행
+4. 성공·실패와 Shadow 설정 강도 기록
+5. Shadow를 끄고 원래 차단 상태 재확인
+```
+
+Shadow 프로젝트도 여러 우회 tweak를 동시에 활성화하면 충돌할 수 있다고 안내한다. 앱별 설정을 사용하고 한 번에 하나만 비교한다. 오래된 Liberty Lite·A-Bypass 자료는 현재 단말의 rootless 지원과 최근 유지보수 상태를 확인한 뒤 참고한다. 고정된 iOS 호환 버전표를 기준으로 삼지 않는다.
+
+Choicy는 대상 앱에 주입되는 tweak를 정리해 충돌 또는 injection 흔적을 분리할 때 사용한다.
+
+```text
+1. 대상 앱의 기본 tweak injection 상태 기록
+2. Choicy에서 다른 tweak 비활성화
+3. 앱 단독 실행 결과 확인
+4. 필요한 경우 Shadow 하나만 허용해 비교
+5. Frida는 별도 attach하여 결과 분리
+```
+
+모든 tweak를 끈 뒤 앱이 열리면 탈옥 흔적보다 특정 주입 모듈이나 충돌을 탐지했을 가능성이 있다. 이 결과는 [Anti-debug 우회](anti-debug-bypass.md) 영역과 함께 본다.
+
+### Objection smoke test
+
+구현을 아직 모를 때 흔한 API 검사인지 빠르게 가늠하는 용도다. 설치한 버전의 도움말과 명령을 먼저 확인한다.
+
+```bash
+objection --version
+objection --help
+objection -n com.target.app start
+```
+
+Objection REPL:
+
+```text
+ios jailbreak disable
+```
+
+구버전 자료에는 `objection -g com.target.app explore` 문법이 보일 수 있다. 현재 설치 버전의 도움말을 우선한다. 자동 우회로 앱이 열려도 어떤 API가 바뀌었는지 확인하지 않으면 판정 근거가 약하므로 앱 전용 탐지 위치를 계속 찾는다.
+
+### 앱 전용 메서드
+
+정적 분석에서 `-[JailbreakDetection isJailbroken]` 같은 Objective-C selector를 확인한 경우에만 사용한다. 먼저 원본 반환값을 출력한다.
 
 ```javascript
-// ios-jailbreak-bypass.js
 if (ObjC.available) {
+    const JailbreakDetection = ObjC.classes.JailbreakDetection;
+    const isJailbroken = JailbreakDetection['- isJailbroken'];
 
-    // 1) NSFileManager fileExistsAtPath: — 흔적 파일 검사 차단
-    var NSFileManager = ObjC.classes.NSFileManager;
-    var blockPaths = [
-        '/Applications/Cydia.app', '/Applications/Sileo.app',
-        '/Library/MobileSubstrate/MobileSubstrate.dylib',
-        '/usr/sbin/sshd', '/usr/bin/ssh', '/etc/apt',
-        '/private/var/lib/apt', '/private/var/lib/cydia',
-        '/private/var/stash', '/bin/bash', '/bin/sh',
-        '/usr/libexec/cydia/firmware.sh', '/var/cache/apt',
-        '/var/log/syslog', '/var/tmp/cydia.log',
-        '/private/var/mobile/Library/SBSettings/Themes',
-        '/Library/MobileSubstrate', '/Library/PreferenceLoader/Preferences',
-        '/Library/PreferenceBundles', '/usr/lib/libsubstrate.dylib',
-        '/usr/lib/libsubstitute.dylib', '/usr/lib/TweakInject.dylib'
-    ];
-
-    Interceptor.attach(NSFileManager['- fileExistsAtPath:'].implementation, {
-        onEnter: function (args) {
-            var path = ObjC.Object(args[2]).toString();
-            this.shouldHide = blockPaths.some(function (p) { return path.indexOf(p) !== -1; });
-            if (this.shouldHide) {
-                console.log('[+] fileExistsAtPath blocked: ' + path);
-            }
-        },
-        onLeave: function (retval) {
-            if (this.shouldHide) retval.replace(0x0);
-        }
-    });
-
-    // 2) UIApplication canOpenURL: — cydia:// / sileo:// 차단
-    var UIApplication = ObjC.classes.UIApplication;
-    var blockSchemes = ['cydia:', 'sileo:', 'undecimus:', 'activator:'];
-    Interceptor.attach(UIApplication['- canOpenURL:'].implementation, {
-        onEnter: function (args) {
-            var url = ObjC.Object(args[2]).absoluteString().toString();
-            this.shouldHide = blockSchemes.some(function (s) { return url.indexOf(s) === 0; });
-            if (this.shouldHide) {
-                console.log('[+] canOpenURL blocked: ' + url);
-            }
-        },
-        onLeave: function (retval) {
-            if (this.shouldHide) retval.replace(0x0);
-        }
-    });
-
-    // 3) access(2) Native 후킹 — fileExistsAtPath 우회 회피용 백업 검사 차단
-    var access = Module.findExportByName(null, 'access');
-    Interceptor.attach(access, {
-        onEnter: function (args) {
-            var path = Memory.readCString(args[0]);
-            this.shouldHide = blockPaths.some(function (p) { return path && path.indexOf(p) !== -1; });
-            if (this.shouldHide) {
-                console.log('[+] access(2) blocked: ' + path);
-            }
-        },
-        onLeave: function (retval) {
-            if (this.shouldHide) retval.replace(-1);
-        }
-    });
-
-    // 4) stat / lstat / fopen 후킹 (위와 동일 원리)
-    ['stat', 'lstat', 'fopen', 'open'].forEach(function (fn) {
-        var addr = Module.findExportByName(null, fn);
-        if (!addr) return;
-        Interceptor.attach(addr, {
-            onEnter: function (args) {
-                var path = Memory.readCString(args[0]);
-                this.shouldHide = blockPaths.some(function (p) { return path && path.indexOf(p) !== -1; });
-                if (this.shouldHide) console.log('[+] ' + fn + ' blocked: ' + path);
-            },
-            onLeave: function (retval) {
-                if (this.shouldHide) {
-                    if (fn === 'fopen' || fn === 'open') retval.replace(ptr(0));
-                    else retval.replace(-1);
-                }
-            }
-        });
-    });
-
-    // 5) fork() — 탈옥 단말은 fork 성공 (sandbox 우회). 강제 -1 반환
-    var fork = Module.findExportByName(null, 'fork');
-    if (fork) {
-        Interceptor.replace(fork, new NativeCallback(function () {
-            console.log('[+] fork() forced to -1');
-            return -1;
-        }, 'int', []));
-    }
-
-    // 6) dyld 검사 — _dyld_image_count / _dyld_get_image_name 후킹
-    //    탈옥 흔적 dylib (MobileSubstrate / Substitute) 을 enumeration 결과에서 숨김
-    var hideDylibs = ['MobileSubstrate', 'libsubstrate', 'libsubstitute', 'TweakInject', 'libcycript'];
-    var dyld_get_image_name = Module.findExportByName(null, '_dyld_get_image_name');
-    if (dyld_get_image_name) {
-        Interceptor.attach(dyld_get_image_name, {
-            onLeave: function (retval) {
-                var name = Memory.readCString(retval);
-                if (name && hideDylibs.some(function (d) { return name.indexOf(d) !== -1; })) {
-                    console.log('[+] dyld image hidden: ' + name);
-                    // 단순화 — 실제로는 다른 정상 dylib 이름으로 교체
-                    retval.replace(Memory.allocUtf8String('/usr/lib/libSystem.B.dylib'));
-                }
+    if (isJailbroken) {
+        Interceptor.attach(isJailbroken.implementation, {
+            onLeave(retval) {
+                console.log('[isJailbroken] result=' + retval.toInt32());
             }
         });
     }
 }
 ```
 
-**실행:**
-
 ```bash
-frida -U -f com.target.app -l ios-jailbreak-bypass.js --no-pause
+frida -U -f com.target.app -l observe-jailbreak.js
 ```
 
-**판정**: 콘솔에 `[+] ... blocked / hidden` 메시지 + 앱 정상 동작이면 우회 성공.
-
-### 케이스 5: DeviceCheck / App Attest
-**언제 쓰는지**: 앱이 Apple 의 DeviceCheck (iOS 11+) 또는 App Attest (iOS 14+) 로 단말 무결성을 서버에서 검증.
-
-**관찰만 — 우회 제한적:**
+차단 시점에 `1`이 반환되는 것을 확인한 뒤 해당 메서드가 원인인지 검증할 때만 `onLeave`에 다음 변경을 추가한다.
 
 ```javascript
-// DCAppAttestService API 호출 추적
+retval.replace(ptr(0));
+```
+
+Swift symbol이 제거됐거나 클래스가 보이지 않으면 selector 이름을 추측해 반복하지 않는다. Mach-O의 함수와 문자열 참조, 호출자 또는 RASP 래퍼를 다시 찾는다.
+
+### 파일 경로 검사
+
+앱에서 실제로 조회한 경로만 대상으로 삼는다. 다음 예시는 두 경로의 원본 결과를 기록하며 값을 바꾸지 않는다.
+
+```javascript
 if (ObjC.available) {
-    var DCAppAttestService = ObjC.classes.DCAppAttestService;
-    if (DCAppAttestService) {
-        Interceptor.attach(DCAppAttestService['- attestKey:clientDataHash:completionHandler:'].implementation, {
-            onEnter: function () { console.log('[+] App Attest attestKey called'); }
-        });
-    }
+    const fileExists = ObjC.classes.NSFileManager['- fileExistsAtPath:'];
+    const observedPaths = new Set([
+        '/Applications/Cydia.app',
+        '/var/jb'
+    ]);
+
+    Interceptor.attach(fileExists.implementation, {
+        onEnter(args) {
+            this.path = new ObjC.Object(args[2]).toString();
+            this.isTarget = observedPaths.has(this.path);
+        },
+        onLeave(retval) {
+            if (this.isTarget) {
+                console.log('[fileExistsAtPath] path=' + this.path +
+                    ' result=' + retval.toInt32());
+            }
+        }
+    });
 }
 ```
 
-**판정**: App Attest 가 적용된 앱은 클라이언트 우회만으로 거래 불가 — MASVS-RESILIENCE 측면 우수. 보고서에 긍정 평가.
+정확히 일치한 경로가 차단 원인인지 확인할 때만 `onLeave` 안에서 다음 줄을 추가한다.
 
-### 케이스 6: 탈옥 탐지 미적용
-**판정**: 탈옥 단말에서 정상 동작 + 정적 분석에서 탐지 코드 부재 → 미적용. 결제 / 금융 / 의료 / 인증 앱은 미흡으로 보고.
+```javascript
+if (this.isTarget) retval.replace(ptr(0));
+```
+
+`path.includes('jail')`처럼 부분 문자열로 정상 파일까지 숨기지 않는다. rootless jailbreak는 `/var/jb` 또는 `/private/preboot/...` 아래 경로를 사용할 수 있으므로 과거 Cydia 경로 목록만 복사하지 말고 현재 단말과 앱 조회값을 연결한다.
+
+### URL Scheme
+
+`canOpenURL:` 검사는 앱의 `Info.plist`에 있는 `LSApplicationQueriesSchemes`와 iOS 정책의 영향을 받는다. `false`가 반환됐다는 사실만으로 해당 앱이 설치되지 않았다고 단정하지 않는다.
+
+```bash
+plutil -p Payload/Target.app/Info.plist | grep -A 20 LSApplicationQueriesSchemes
+```
+
+정적 분석에서 `cydia://` 또는 `sileo://` 사용을 확인한 뒤 해당 URL만 관찰한다.
+
+```javascript
+if (ObjC.available) {
+    const canOpenURL = ObjC.classes.UIApplication['- canOpenURL:'];
+
+    Interceptor.attach(canOpenURL.implementation, {
+        onEnter(args) {
+            this.url = new ObjC.Object(args[2]).absoluteString().toString();
+            this.isTarget = this.url.startsWith('cydia://');
+        },
+        onLeave(retval) {
+            if (this.isTarget) {
+                console.log('[canOpenURL] url=' + this.url +
+                    ' result=' + retval.toInt32());
+            }
+        }
+    });
+}
+```
+
+원본 결과와 차단 시점이 연결된 뒤에만 대상 URL의 반환값을 `0`으로 바꿔 영향 범위를 확인한다.
+
+### Native 탐지
+
+Objective-C 후킹 로그 없이 차단되거나 Mach-O에서 `access`, `stat`, `lstat`, `fopen`, `fork`, dyld API가 보이면 Native 검사를 의심한다.
+
+```bash
+frida-trace -U -f com.target.app -i 'access'
+frida-trace -U -f com.target.app -i 'fork'
+frida-trace -U -f com.target.app -i '_dyld_get_image_name'
+```
+
+한 번에 함수 하나를 추적하고 생성된 handler에서 경로와 호출자를 좁힌다. `open`, `fopen`, `fork`를 전역 교체하면 정상 기능과 라이브러리 초기화를 깨뜨릴 수 있다. 특히 `open()` 실패는 `-1`과 적절한 `errno`가 필요하므로 반환값만 `0`으로 바꾸는 범용 예시는 사용하지 않는다.
+
+dyld에서 Frida, Substrate, ElleKit 같은 모듈을 찾는 로직은 탈옥 탐지와 계측 탐지가 겹친 영역이다. Frida attach 전에도 차단되는지 비교한 뒤 [Anti-debug 우회](anti-debug-bypass.md)로 분리한다.
+
+### 바이너리 패치
+
+시작 시점이 너무 빠르거나 후킹이 허용되지 않을 때만 제한적으로 검토한다. 복호화된 IPA와 원본을 분리하고 탐지 분기 하나만 변경한다.
+
+```bash
+otool -L Payload/Target.app/Target
+codesign -d --entitlements - Payload/Target.app/Target
+```
+
+패치와 재서명은 provisioning profile, entitlement, keychain access group, App Attest 환경에 영향을 준다. 재서명본 설치·실행 실패를 탈옥 탐지 실패로 해석하지 말고 [앱 위변조](app-tampering.md)에서 별도로 확인한다.
+
+### App Attest·DeviceCheck
+
+두 기능을 탈옥 판정 API로 묶지 않는다.
+
+| 기능 | 실제 역할 | 점검 핵심 |
+| :--- | :--- | :--- |
+| App Attest | 앱 인스턴스가 정당한 앱인지 서버가 검증할 수 있도록 key, attestation, assertion 제공 | 일회성 challenge, `clientDataHash`, assertion 검증과 민감 요청 결합 |
+| DeviceCheck | 앱이 Apple 서버에 단말별 두 개의 bit 상태를 저장·조회 | bit의 업무 의미, token 서버 검증, 실패·초기 상태 처리 |
+
+App Attest는 `isJailbroken` 같은 verdict를 직접 반환하지 않는다. 서버가 발급한 일회성 challenge를 attestation 또는 assertion에 결합하고, 서버가 객체·counter·앱 식별 정보를 검증해야 의미가 있다. DeviceCheck의 두 bit 값도 Apple이 자동으로 설정하는 탈옥 상태가 아니라 서비스가 정의하고 관리하는 상태다.
+
+정적 분석 키워드:
+
+```text
+DCAppAttestService
+generateKeyWithCompletionHandler:
+attestKey:clientDataHash:completionHandler:
+generateAssertion:clientDataHash:completionHandler:
+DCDevice
+generateTokenWithCompletionHandler:
+```
+
+승인된 정상 단말과 탈옥 단말에서 같은 민감 기능을 수행하고 다음을 비교한다.
+
+1. 서버 challenge의 일회성과 만료 처리
+2. assertion과 실제 API 요청 데이터의 결합
+3. assertion 누락·오류 때 서버의 차단 또는 제한 처리
+4. 정상 단말과 탈옥 단말의 서버 응답 차이
+5. unsupported·네트워크 오류 때 fallback 범위
+
+클라이언트에서 `DCAppAttestService` 호출을 찾은 것만으로 서버 검증을 확정하지 않는다. 화면 분기를 후킹해 열었다고 해서 App Attest assertion 검증이나 서버 정책을 우회한 것도 아니다.
 
 ---
 
-## 취약 판정 기준
+## 결과 판정
 
-다음 중 **하나라도** 해당하면 미흡 / 미적용:
+| 관찰 결과 | 판단 | 다음 확인 |
+| :--- | :--- | :--- |
+| 탈옥 단말에서도 정상 실행 | 탐지 미적용 가능 | 요구사항과 보호 대상 기능 확인 |
+| Shadow 적용 뒤 앱 실행 | 알려진 신호 우회 가능성 | 실제 바뀐 검사와 민감 기능 영향 식별 |
+| 앱 전용 boolean 하나로 화면 차단 해제 | 단일 클라이언트 통제 후보 | 서버가 민감 작업도 승인하는지 확인 |
+| Native hook 뒤 화면만 열림 | 로컬 분기 우회 | 인증·권한·서버 정책 확인 |
+| App Attest 코드 존재 | 서버 검증 후보 | challenge, assertion, 요청 결합 확인 |
+| assertion 오류에도 민감 API 승인 | 서버 검증 미적용 후보 | 테스트 조건과 fallback 정책 재확인 |
+| Frida 연결 때만 종료 | 계측 탐지 후보 | 탈옥 탐지와 분리 점검 |
 
-- [ ] **탈옥 탐지 미적용** — 결제 / 금융 / 의료 앱에 한정 미흡
-- [ ] **Shadow / Liberty / A-Bypass 만으로 우회 가능** — Bypass-resistant 부재
-- [ ] **Frida 한 줄 (`fileExistsAtPath:` 후킹) 로 우회 가능** — 단일 신호 의존
-- [ ] **클라이언트 단일 신호만** — DeviceCheck / App Attest 등 서버 사이드 검증 부재
-- [ ] **차단 기능이 클라이언트 검증** 만으로 — 서버 API 가 단말 무결성과 무관
+다음 조건을 함께 만족할 때 보호 통제 약점을 구체적인 후보로 남긴다.
 
-**오탐 주의:**
+- 고객사 요구사항이나 위협 모델상 해당 기능에 단말·앱 무결성 통제가 필요하다.
+- 최소한의 클라이언트 변경으로 통제가 해제된다.
+- 서버가 민감 기능을 그대로 승인하거나 후속 통제가 없다.
+- 정상·탈옥 단말과 변경 전·후 결과가 반복 재현된다.
 
-- [ ] 정보 제공 앱 / 단순 유틸은 미적용이 정상
-- [ ] 일부 앱은 탈옥 단말에서 경고만 (실행 허용) — 미흡 아닐 수 있음
-- [ ] App Attest 적용 시 클라이언트 우회 불가 — 우수 평가
+탈옥 탐지 부재, Shadow 적용, Frida 후킹 또는 바이너리 패치 성공만으로 등급을 정하지 않는다. 일반 정보 조회 앱과 금융 거래 앱의 요구 수준은 다르며 실제 영향은 보호 대상 기능과 서버 통제에서 결정한다.
 
----
+## 증적 항목
 
-## 다른 페이지로 위임
+- 앱 버전, Bundle ID, IPA·Mach-O SHA-256
+- 단말 모델, iOS 버전, jailbreak 종류와 버전
+- rootful·rootless 방식과 injection library
+- Shadow·Choicy·Frida 등 적용 도구 버전
+- 정상 단말과 탈옥 단말의 같은 기능 결과
+- 차단 메시지, 발생 시각, crash·system log
+- 확인한 클래스·selector·Native 모듈과 원본 반환값
+- 적용한 변경 하나와 변경 전·후 결과
+- 보호 대상 API의 마스킹된 요청·응답과 서버 처리
+- App Attest challenge·assertion 또는 DeviceCheck 사용 흐름
 
-- **Android 루팅 탐지 우회** → `root-detection-bypass.md`
-- **Frida / 디버거 탐지로 후킹 자체 차단** → `anti-debug-bypass.md`
-- **SSL Pinning 우회** → `ssl-pinning-bypass.md`
-- **Frida 기본 후킹 패턴** → `frida-scripts.md`
-- **탐지 코드 위치 식별 (정적 분석)** → `static-analysis.md`
+## 트러블슈팅
 
----
+#### Shadow 적용 후 차단
+
+- 다른 bypass tweak를 모두 끄고 Shadow 하나만 적용한다.
+- jailbreak와 injection library가 Shadow의 현재 릴리스와 호환되는지 확인한다.
+- rootless 경로와 앱이 실제 조회하는 경로가 맞는지 확인한다.
+- 앱 캐시와 서버의 단말 위험 상태가 이전 결과를 유지하는지 확인한다.
+
+#### 앱 시작 직후 종료
+
+- Frida를 연결하지 않은 직접 실행 결과와 비교한다.
+- crash report의 exception type, termination reason, faulting module을 확인한다.
+- 탈옥 탐지보다 anti-debug, dylib 검사, 서명 검증이 먼저 실행되는지 분리한다.
+
+#### Objective-C 클래스 부재
+
+- 프로세스와 attach 시점이 맞는지 확인한다.
+- Swift 전용 구현, stripped symbol, C++·Native RASP 가능성을 확인한다.
+- `ObjC.enumerateLoadedClassesSync()` 전체 출력보다 정적 단서와 모듈을 먼저 좁힌다.
+
+#### Native 로그 과다
+
+- `access`, `stat`, `open`을 동시에 추적하지 않는다.
+- 한 함수와 한 사용자 행동만 재현한다.
+- handler에서 확인한 경로나 호출자만 출력하고 토큰·개인정보는 남기지 않는다.
+
+#### App Attest 오류
+
+- 테스트 빌드의 entitlement와 App Attest environment를 확인한다.
+- 단말 지원 여부, 네트워크, 서버 challenge 만료를 확인한다.
+- 클라이언트 API 오류와 백엔드 assertion 검증 실패를 구분한다.
+- 재서명본에서만 실패하면 원본과 entitlement·Team ID·Bundle ID를 비교한다.
+
+#### 재서명본 실행 실패
+
+- provisioning profile, entitlement, keychain access group을 원본과 비교한다.
+- 암호화된 App Store Mach-O를 그대로 패치하지 않았는지 확인한다.
+- 설치 성공 뒤 종료된다면 서명·무결성 검사를 [앱 위변조](app-tampering.md)로 분리한다.
+
+## 빠른 명령어 참조
+
+```bash
+# 단말·도구 기준 정보
+uname -a
+ls -ld /var/jb /private/preboot 2>/dev/null
+frida --version
+frida-ps -Uai
+
+# 정적 단서
+strings -a Payload/Target.app/Target | grep -iE 'jail|cydia|sileo|appattest|devicecheck'
+otool -L Payload/Target.app/Target
+plutil -p Payload/Target.app/Info.plist
+
+# 동적 분석
+frida -U -f com.target.app -l observe-jailbreak.js
+frida-trace -U -f com.target.app -m '-[JailbreakDetection isJailbroken]'
+objection -n com.target.app start
+```
+
+## 관련 문서
+
+- [iOS 진단 환경 구성](setup-ios.md): 탈옥 단말, SSH, Frida 환경
+- [정적 분석](static-analysis.md): Mach-O, selector, Native 모듈 식별
+- [Frida 후킹 실무](frida-scripts.md): 관찰용 후킹과 대상 범위 축소
+- [SSL Pinning 우회](ssl-pinning-bypass.md): 네트워크 분석 경로 확보
+- [Anti-debug 우회](anti-debug-bypass.md): Frida·디버거·로드 이미지 탐지 분리
+- [앱 위변조](app-tampering.md): 재서명과 앱 무결성 검증
+- [루팅 탐지 우회](root-detection-bypass.md): Android 대응 영역
 
 ## 참고자료
 
-- [OWASP MASTG - iOS Anti-Reversing Defenses](https://mas.owasp.org/MASTG/0x06j-Testing-Resiliency-Against-Reverse-Engineering/)
-- [OWASP MASTG-TEST-0049 - Jailbreak Detection (iOS)](https://mas.owasp.org/MASTG/tests/ios/MASVS-RESILIENCE/MASTG-TEST-0049/)
-- [Shadow (오픈소스 탈옥 우회)](https://github.com/jjolano/shadow)
-- [Liberty Lite](https://repo.theninjaprawn.com/)
-- [A-Bypass](https://repo.akemin.dev/)
+공식·테스트 가이드:
+
+- [OWASP MASTG - Jailbreak Detection](https://mas.owasp.org/MASTG/knowledge/ios/MASVS-RESILIENCE/MASTG-KNOW-0084/)
+- [OWASP MASTG - Bypassing Jailbreak Detection](https://mas.owasp.org/MASTG/techniques/ios/MASTG-TECH-0152/)
 - [Apple - DeviceCheck](https://developer.apple.com/documentation/devicecheck)
-- [Apple - App Attest](https://developer.apple.com/documentation/devicecheck/dcappattestservice)
-- [Frida CodeShare - ios-jailbreak-bypass](https://codeshare.frida.re/@dki/ios10-jailbreak-detection-bypass/)
-- [Objection - iOS Jailbreak Bypass](https://github.com/sensepost/objection/wiki/Disabling-Jailbreak-Detection)
-- [HackTricks - iOS Jailbreak Detection Bypass](https://book.hacktricks.xyz/mobile-pentesting/ios-pentesting/ios-jailbreak-detection)
+- [Apple - 단말별 상태 조회·수정](https://developer.apple.com/documentation/devicecheck/accessing-and-modifying-per-device-data)
+- [Apple - App Attest 서버 검증](https://developer.apple.com/documentation/devicecheck/validating-apps-that-connect-to-your-server)
+- [Frida 공식 문서](https://frida.re/docs/)
+
+커뮤니티 도구:
+
+- [Shadow](https://github.com/jjolano/shadow)
+- [Objection](https://github.com/sensepost/objection)

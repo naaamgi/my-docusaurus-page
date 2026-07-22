@@ -1,349 +1,256 @@
 ---
-sidebar_position: 31
+sidebar_position: 12
 title: 예외 처리 미흡
-description: 웹 진단 - 예외 처리 결함으로 인한 보안 검증 우회 (fail-open), 정보 노출, 사용자 열거, 트랜잭션/락 누락 점검
-keywords: [Error Handling, Exception Handling, Fail-Open, Mishandling Exceptional Conditions, Information Leakage, User Enumeration, OWASP A10]
+description: 비정상 입력에서 상세 오류 노출, fail-open, 자원 정리 실패를 확인하는 실무 예외 처리 진단 절차
+keywords: [Error Handling, Exception Handling, Fail-Open, Mishandling Exceptional Conditions, Stack Trace, Resource Cleanup, OWASP A10]
 draft: false
----
-
-# 예외 처리 미흡
-> 예외 발생 시 애플리케이션이 **보안 검증을 건너뛰거나 (fail-open) / 정보를 노출하거나 / 일관성 없는 응답** 으로 인해 발생하는 결함.
-> OWASP 2025 신규 카테고리로, 단독보다 다른 결함의 우회 / 정보 단서를 제공하는 패턴이 핵심.
-
-## 점검 개요
-
-| 항목 | 내용 |
-| :--- | :--- |
-| **분류** | OWASP A10:2025 - Mishandling of Exceptional Conditions (2025 신규) / KISA 예외 처리 |
-| **CWE** | [CWE-755: Improper Handling of Exceptional Conditions](https://cwe.mitre.org/data/definitions/755.html), [CWE-209: Information Exposure Through Error Messages](https://cwe.mitre.org/data/definitions/209.html), [CWE-754: Improper Check for Unusual or Exceptional Conditions](https://cwe.mitre.org/data/definitions/754.html), [CWE-396: Declaration of Catch for Generic Exception](https://cwe.mitre.org/data/definitions/396.html) |
-| **영향도** | 🟡 (정보 노출 / 사용자 열거) / 🔴 (Fail-open 으로 인증·권한·결제 우회) |
-| **점검 난이도** | 중 (예외 유도 + 응답 차이 비교) |
-| **예상 점검 시간** | 1 ~ 3시간 |
-
+toc_max_heading_level: 3
 ---
 
 ## 점검 목적
 
-비정상 입력 / 동시 요청 / 외부 의존성 실패 등 **예외 상황에서 애플리케이션이 안전한 동작** 을 하는지 확인한다. 정상 흐름은 잘 동작해도, 예외 발생 시 인증/권한/결제 검증이 우회되거나 (fail-open), 내부 정보가 노출되거나, 응답 차이로 사용자 열거가 가능한 결함이 자주 발견된다.
+잘못된 자료형, 누락된 값, 만료된 인증 정보 같은 비정상 상황에서도 애플리케이션이 안전하게 거절되는지 확인한다. 상세 오류가 외부에 노출되는지, 검증 예외가 권한 통과로 이어지는지, 오류 뒤 사용한 자원이 정상적으로 정리되는지가 핵심이다.
 
-> **다른 페이지와 영역 분리**
-> - 에러 메시지의 스택트레이스 / 디버그 모드 노출 → `information-disclosure.md` 케이스 4 (정보 자체 노출 중심)
-> - 에러 페이지의 SQL 흔적 → `sql-injection.md`
-> - 사용자 열거의 응답 차이 일반 → `authentication.md`
-> - 본 페이지는 **예외 처리 로직 자체** 의 결함 + 보안 검증 우회 관점
-
----
+스택 트레이스나 디버그 정보의 일반적인 노출은 [정보 노출](./information-disclosure.md), 계정 존재 여부 차이는 [인증](./authentication.md)에서 더 넓게 다룬다. 결제 일부 처리, 포인트·사용 횟수 불일치, 허용되지 않은 상태 전이는 [비즈니스 로직](./business-logic.md), 중복 callback과 동시 처리 문제는 [Race Condition](./race-condition.md)으로 분리한다. 이 문서는 **예외가 발생했을 때 안전하게 실패하는지**에 집중한다.
 
 ## 유형 구분
 
-| 유형 | 핵심 |
-| :--- | :--- |
-| **Fail-open (예외 시 통과)** | 인증/권한/결제 검증 중 예외 발생 → 거부 대신 통과 |
-| **Catch-all + Swallow** | `catch (Exception e) {}` 빈 처리로 예외 무시 → 후속 흐름 비정상 진행 |
-| **예외 시 트랜잭션 / 락 누락** | 예외로 트랜잭션 롤백 안 됨, 락 해제 안 됨 → 데이터 불일치 |
-| **일관성 없는 에러 응답** | 사용자 열거 (`존재하지 않는 ID` vs `비밀번호 오류`), 응답 시간 차이 |
-| **에러 메시지 정보 노출** | 스택트레이스, SQL 쿼리, 파일 경로, 내부 IP |
-| **외부 의존성 실패 시 동작** | DB / 캐시 / 외부 API 실패 시 동작 미정의 → 우회 가능 |
-| **검증 순서 결함** | 권한 검증 후 비싼 처리 → 예외 시 부분 적용 |
-
----
+| 유형 | 특징 | 실무 판단 |
+| :--- | :--- | :--- |
+| 상세 오류 노출 | 스택 트레이스, 경로, 쿼리, 내부 주소가 응답에 포함됨 | 노출 값의 민감도와 실제 활용 가능성을 확인 |
+| 예외 시 통과 | 검증 도중 오류가 나면 거부하지 않고 진행함 | 보호 데이터나 기능이 실제로 열리는지 확인 |
+| 응답 불일치 | 같은 실패가 상태 코드·본문·시간에서 다르게 보임 | 사용자·자원 존재 여부를 안정적으로 구분할 수 있는지 확인 |
+| 자원 정리 실패 | 오류 뒤 파일·세션·락·임시 상태가 남음 | 한 번의 통제된 실패 뒤 정상 요청 영향 확인 |
 
 ## 진단 절차
 
-### Step 1. 예외 유도 페이로드 매핑
+#### Step 1. 정상과 예상된 실패 기준 기록
 
-각 입력 포인트에 다음을 차례로 시도해 예외 응답 수집:
+- 정상 요청과 함께 필수 필드 누락, 인증 없음, 권한 없음, 존재하지 않는 자원 요청을 각각 저장한다.
+- 상태 코드, 본문 구조, 응답 헤더, 쿠키 변화, 응답 시간과 후속 상태를 기록한다.
+- `400`, `401`, `403`, `404`, `409`, `422`처럼 의도된 실패와 처리하지 못한 `500`을 구분한다.
 
-```
-- 타입 미스매치 (숫자 자리에 문자열 / 객체)
-- 범위 초과 (Integer.MAX_VALUE, 음수, 매우 긴 문자열, 0)
-- null / 빈 문자열 / 누락된 필드
-- 특수문자 / 유니코드 / 제어 문자
-- 매우 큰 페이로드 (10MB JSON)
-- 중복 키 / 배열 형식 변조
-- 동시 요청 (race window 유발)
-- 외부 의존성 실패 모사 (가짜 토큰 / 만료된 키 / 잘못된 endpoint)
-```
+#### Step 2. 입력별 최소 오류 유도
 
-### Step 2. 응답 분석
+- 한 요청에서 한 값만 `null`, 빈 문자열, 잘못된 자료형, 누락 값으로 바꾼다.
+- 숫자는 `0`, `-1`, 정상 범위를 조금 넘는 값부터 확인한다.
+- JSON은 문법 오류, 중복 키, 배열·객체 바꾸기를 필요한 입력에만 적용한다.
+- 대용량 본문, 장시간 지연, 동시 요청은 기본 오류 확인에 사용하지 않는다.
 
-```
-- HTTP 상태 코드 (200 / 400 / 401 / 403 / 500 등)
-- 응답 본문 (에러 메시지, 스택트레이스, JSON 구조)
-- 응답 시간 차이
-- 후속 상태 변화 (DB / 세션 / 잔액)
-```
+#### Step 3. 어느 계층의 오류인지 구분
 
-### Step 3. Fail-open 우회 시도
+- CDN·WAF·리버스 프록시가 만든 HTML 오류인지 애플리케이션 JSON 오류인지 확인한다.
+- `Server`, `Via`, `X-Request-ID`, `traceparent`와 본문 오류 식별자를 함께 본다.
+- 같은 요청을 다시 보내 오류가 반복되는지 확인한다. 일회성 게이트웨이 오류는 앱 결함과 분리한다.
 
-보안 검증이 예외로 우회되는지 입증 (케이스 1).
+#### Step 4. 보호 동작과 자원 정리 확인
 
-### Step 4. 정보 노출 / 사용자 열거 확인
+- `200`과 `500`만 보지 말고 보호 데이터, 세션, 쿠키와 권한이 바뀌었는지 확인한다.
+- 업로드·편집 잠금·일회용 토큰은 오류 뒤 같은 테스트 객체를 정상적으로 다시 사용할 수 있는지 확인한다.
+- 외부 인증 서비스의 실패를 mock할 수 있다면 접근이 거부되는지만 확인한다. 주문·결제 상태 정합성은 비즈니스 로직 문서로 분리한다.
 
-응답 차이로 정보 추론 가능한지 확인 (케이스 4, 5).
+### 상황별 빠른 선택
 
----
+| 현재 상황 | 첫 확인 |
+| :--- | :--- |
+| 숫자 ID를 받는 조회 API | 문자열, `0`, `-1`, 존재하지 않는 정상 형식 ID |
+| JSON 생성·수정 API | 필수 필드 누락, `null`, 문자열·객체 자료형 교체 |
+| 인증된 API | 토큰 없음, 잘못된 토큰, 권한 없는 테스트 계정 |
+| 업로드·편집·일회용 토큰 | 오류 한 번 뒤 정상 요청이 가능한지 확인 |
+| 외부 인증 연동 | mock 실패 응답에서 접근이 거부되는지 확인 |
+| `500` 또는 HTML 오류 | 원시 응답 헤더와 생성 계층 확인 |
+| 로그인·비밀번호 재설정 | 존재하는 테스트 계정과 없는 계정의 응답 비교 |
 
-## 페이로드 / 테스트 케이스
+## 페이로드 노트
 
-### 케이스 1: Fail-open — 예외 시 보안 검증 우회
-**언제 쓰는지**: 인증 / 권한 / 결제 / 서명 검증 흐름. 검증 중 예외가 발생하면 거부가 아닌 통과되는 결함.
+### 1. 필수 값과 자료형을 한 개씩 변경
 
-**위험 패턴:**
-
-```python
-# 위험 — 예외 발생 시 인증 우회
-def is_admin(token):
-    try:
-        payload = jwt.decode(token, key, algorithms=["HS256"])
-        return payload.get("role") == "admin"
-    except:
-        return True              # ← 예외 시 통과 (인증 우회)
-
-# 위험 — Optional unwrap 누락
-def check_permission(user_id, resource_id):
-    try:
-        resource = Resource.get(resource_id)
-        return resource.owner_id == user_id
-    except DoesNotExist:
-        return True              # ← 자원 없으면 통과 (IDOR)
-```
-
-**시도 시나리오:**
-
-```
-1. JWT 토큰 변조 (잘못된 서명) → 예외 발생 → 통과되면 fail-open
-2. 권한 검증 쿼리에 잘못된 ID → DB 에러 → 통과되면 fail-open
-3. 외부 인증 서버 응답 지연 / 실패 → timeout 예외 → 통과되면 fail-open
-4. 결제 검증 API 실패 → 주문 확정 진행되면 fail-open
-```
-
-**페이로드 예시:**
-
-```http
-# JWT 검증 우회 — 잘못된 서명으로 예외 유발
-Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOjF9.INVALID_SIGNATURE
-
-# 권한 검증 우회 — 존재하지 않는 ID
-GET /api/orders/99999999999999999999
-
-# 외부 API timeout 유발 — 매우 큰 본문
-POST /api/payment
-{"items": [...10MB...]}
-```
-
-**판정**: 예외 응답 대신 정상 처리되거나, 인증/권한이 통과되면 fail-open 결함. **단일 결함으로 인증 우회 + 권한 우회 가능** → Critical.
-
-### 케이스 2: Catch-all + Swallow — 예외 무시로 후속 흐름 비정상 진행
-
-**언제 쓰는지**: 다단계 처리에서 중간 단계가 실패해도 마지막 단계까지 진행되는 흐름.
-
-**위험 패턴:**
-
-```javascript
-// 위험 — 결제 실패해도 주문 확정
-async function checkout(req, res) {
-    try {
-        await chargePayment(req.body.amount);
-    } catch (e) {
-        // 결제 실패 무시
-    }
-    await Order.create({ status: 'CONFIRMED' });   // 결제 실패해도 주문 확정
-    res.json({ ok: true });
-}
-
-// 위험 — 권한 변경 실패해도 성공 응답
-try {
-    await user.assignRole(req.body.role);
-} catch (e) {
-    logger.warn(e);
-}
-return res.json({ status: 'updated' });
-```
-
-**시도:**
-
-```
-- 결제 API 의 amount 를 매우 크게 → 결제 실패 유발 → 주문은 확정되는지
-- 외부 검증 API 실패 시 후속 처리 진행 여부
-- 트랜잭션 도중 예외 유발 → 일부 적용된 상태 잔존
-```
-
-**판정**: 예외 발생 후에도 주문 / 권한 변경 / 상태 전이가 적용되면 결함. 비즈니스 로직 결함 (`business-logic.md`) 과 결합되어 직접 금전 손실 가능.
-
-### 케이스 3: 예외 시 트랜잭션 / 락 누락
-
-**언제 쓰는지**: 다단계 DB 처리. 중간 예외로 트랜잭션 미롤백 / 락 미해제.
-
-**위험 패턴:**
-
-```python
-# 위험 — try/except 가 트랜잭션 밖
-def transfer(from_id, to_id, amount):
-    try:
-        deduct_balance(from_id, amount)        # 1단계
-        add_balance(to_id, amount)             # 2단계 — 여기서 예외 시?
-        log_transaction(...)                    # 3단계
-    except Exception as e:
-        return error()                          # 1단계만 적용된 상태 잔존 = 잔액 손실
-```
-
-**시도:**
-
-```
-- 송금 요청에서 수취 계정을 존재하지 않는 ID 로 → 2단계 실패 유발
-- 결제 도중 외부 의존성 실패 모사
-- 동시 요청으로 락 충돌 유발 → 한 요청 예외 시 락 미해제로 데드락
-```
-
-**판정**: 예외 후 DB 상태가 비즈니스 로직과 불일치 (잔액 차감만 적용 / 권한 부여만 적용 등) 면 결함.
-
-### 케이스 4: 일관성 없는 에러 응답 — 사용자 열거 / 정보 추론
-
-**언제 쓰는지**: 로그인 / 비밀번호 재설정 / 가입 / 이메일 인증 흐름.
-
-**위험 패턴 — 사용자 열거:**
-
-```
-[로그인]
-- 존재하는 ID + 틀린 비밀번호 → "비밀번호가 틀렸습니다"
-- 존재하지 않는 ID            → "존재하지 않는 사용자입니다"
-→ 응답 차이로 ID 존재 여부 enumeration
-
-[비밀번호 재설정]
-- 존재하는 이메일 → "재설정 메일을 보냈습니다" (200)
-- 없는 이메일     → "등록되지 않은 이메일입니다" (404)
-→ 가입 이메일 목록 enumeration
-
-[응답 시간 차이]
-- 존재하는 ID → bcrypt 검증으로 200ms 응답
-- 없는 ID     → 즉시 50ms 응답 (DB 조회 후 즉시 종료)
-→ 시간 기반 enumeration
-```
-
-**시도:**
-
-```python
-# 자동화 enumeration
-for email in candidates:
-    r = requests.post('/api/auth/reset', json={'email': email})
-    if r.json().get('message') == '재설정 메일을 보냈습니다':
-        print(f"가입: {email}")
-```
-
-**판정**: 응답 메시지 / 상태 코드 / 응답 시간이 사용자 존재 여부에 따라 달라지면 결함. `authentication.md` 와 일부 겹침 — 본 페이지는 예외 처리 일관성 관점.
-
-### 케이스 5: 에러 메시지 정보 노출
-
-**언제 쓰는지**: 예외 유도 페이로드 후 응답 본문 분석.
-
-**위험 패턴:**
+**이럴 때 사용**: JSON API가 기대하지 않은 값을 어떻게 처리하는지 가장 먼저 확인할 때 사용한다.
 
 ```json
-[Django debug=True]
-{"error": "OperationalError: no such table: users",
- "traceback": ["/app/views.py:42 in get_user\n  return User.objects.get(...)"],
- "request_data": {...}}
-
-[Spring Boot Whitelabel]
-"trace": "org.springframework.dao.DataIntegrityViolationException: ..."
-
-[Express stack trace]
-"stack": "Error: ECONNREFUSED 10.0.0.5:5432\n    at TCPConnectWrap..."
-
-[PHP]
-"Warning: file_get_contents(/etc/passwd): failed to open stream..."
-
-[일반 — 내부 정보 노출]
-{"error": "Failed to connect to mysql://app:Pa$$w0rd@db.internal:3306/app"}
-{"error": "Invalid AWS credentials: AKIA..."}
-{"error": "Internal user ID 99988 not found"}
+{"quantity":1,"product_id":"TEST-100"}
 ```
 
-**판정**: 응답에 스택트레이스 / SQL 쿼리 / 자격증명 / 내부 경로 / 내부 IP 노출 시 결함. `information-disclosure.md` 와 일부 겹침 — 본 페이지는 **예외 유도로 노출** 되는 케이스 중심.
+아래 값은 한 번에 하나씩 바꾼다.
 
-### 케이스 6: 외부 의존성 실패 시 동작 미정의
-
-**언제 쓰는지**: 외부 API / 결제 PG / SSO IdP / 메일 서버 등에 의존하는 흐름.
-
-**시나리오:**
-
-```
-1. 외부 인증 서버 timeout → 인증 결과 미정의 → 통과 / 거부 어느 쪽?
-2. 결제 PG 응답 누락 → 주문 상태 미정의
-3. SMS 인증 서버 실패 → 인증 단계 건너뛰기 가능?
-4. 메일 서버 실패 → 비밀번호 재설정 토큰이 메일은 안 가지만 DB 엔는 저장? (다른 사용자가 토큰 알아내면 우회)
+```json
+{"quantity":null,"product_id":"TEST-100"}
 ```
 
-**시도:**
-
-```
-- 외부 의존성 URL 을 사설망 / 존재하지 않는 IP 로 변조 (점검 환경에서만)
-- Burp 의 응답 변조로 외부 응답 시뮬레이션
-- 매우 큰 본문 / 지연으로 timeout 유발
+```json
+{"quantity":"1","product_id":"TEST-100"}
 ```
 
-**판정**: 외부 실패 시 인증 / 결제가 통과되거나, 부분 적용 / 토큰 노출이 발생하면 결함.
-
-### 케이스 7: 검증 순서 결함
-
-**언제 쓰는지**: 비싼 처리 (이메일 전송, 외부 API 호출, 파일 처리) 가 권한 검증보다 먼저 실행되는 흐름.
-
-**위험 패턴:**
-
-```python
-# 위험 — 파일 업로드를 권한 검증 전에 처리
-def upload(request):
-    save_file_to_disk(request.FILES['file'])     # 1. 파일 저장 (비싸고 위험)
-    if not request.user.has_permission('upload'):
-        return forbidden()                        # 2. 권한 검증 (너무 늦음)
-    register_file(...)
+```json
+{"quantity":{},"product_id":"TEST-100"}
 ```
 
-**시나리오:**
+검증 오류가 일반화된 `400`·`422` 응답으로 끝나는지, 내부 클래스명이나 쿼리가 노출되는지, 예외 뒤 보호 기능이 기본 허용값으로 처리되는지 확인한다.
 
+### 2. 경로·쿼리 숫자의 경계 확인
+
+**이럴 때 사용**: 숫자형 자원 ID, 페이지 번호, 수량을 받는 요청에서 사용한다.
+
+```http
+GET /api/orders/not-a-number HTTP/1.1
 ```
-- 권한 없는 사용자가 큰 파일 업로드 → 디스크 채움 (DoS)
-- 권한 없는 사용자가 이메일 전송 트리거 → 스팸 / 비용 발생
-- 권한 검증 실패해도 외부 API 호출 / 결제 시도는 발생
+
+```http
+GET /api/orders/0 HTTP/1.1
 ```
 
-**판정**: 권한 거부 응답이 와도 부수 효과 (파일 저장 / 이메일 전송 / 외부 API 호출) 가 발생하면 결함.
+```http
+GET /api/orders/-1 HTTP/1.1
+```
 
-### 그 외 — 한 줄 언급만
+문자열에서 변환 스택 트레이스가 나오는지, 음수가 다른 자원으로 정규화되는지, 존재하지 않는 ID가 권한 검사를 건너뛰는지 확인한다. 정상적인 `400`이나 `404`만 반환되면 취약점이 아니다.
 
-- **로그 미흡** — 보안 관련 이벤트 (실패한 로그인, 권한 거부, 위조 시도) 가 로깅 안 됨 → 사고 추적 어려움
-- **로그 과다 / 민감 정보 로깅** — 비밀번호 / 토큰 / 카드 번호가 평문 로그에 → 로그 노출 시 자격증명 유출
-- **모니터링 / 알람 누락** — 이상 패턴이 알람으로 안 옴 → 사고 인지 지연
+### 3. JSON 문법과 `Content-Type` 오류 확인
 
----
+**이럴 때 사용**: API 파서, 프레임워크 전역 오류 처리, 게이트웨이와 앱의 응답 차이를 확인할 때 사용한다.
 
-## 취약 판정 기준
+```http
+POST /api/profile HTTP/1.1
+Content-Type: application/json
 
-다음 중 **하나라도** 해당하면 취약:
+{"display_name":"test"
+```
 
-- [ ] 인증 / 권한 / 결제 검증 중 예외 발생 시 fail-open (통과) 동작
-- [ ] 다단계 처리 중간 예외 후에도 최종 상태 (주문 확정 / 권한 변경) 적용
-- [ ] 예외 발생 시 트랜잭션 미롤백 / 락 미해제로 DB 상태 불일치
-- [ ] 응답 메시지 / 시간 차이로 사용자 / 토큰 / 자원 존재 여부 enumeration
-- [ ] 예외 응답에 스택트레이스 / SQL 쿼리 / 자격증명 / 내부 IP 노출
-- [ ] 외부 의존성 실패 시 인증 / 결제 / 권한 우회
-- [ ] 권한 검증 전에 비싼 처리 (파일 저장 / 이메일 / 외부 API) 실행
+```http
+POST /api/profile HTTP/1.1
+Content-Type: text/plain
 
-**오탐 주의:**
+{"display_name":"test"}
+```
 
-- [ ] 의도된 동작 (외부 PG 실패 시 자동 재시도, 부드러운 실패 메시지) 일 수 있음 — 정책 확인
-- [ ] 응답 시간 차이는 bcrypt 등 정상 처리 시간일 수 있음 — 측정 다회 + 통계
-- [ ] 디버그 모드는 개발 환경 의도 — 운영 환경에서만 결함
+깨진 JSON은 보통 `400`, 지원하지 않는 형식은 `415`가 자연스럽다. `500`이 나오더라도 내부 정보, 상태 변화, 반복 재현이 없으면 오류 처리 개선 후보일 뿐 보안 취약점으로 바로 확정하지 않는다.
 
----
+### 4. 인증·권한 오류가 안전하게 닫히는지 확인
+
+**이럴 때 사용**: 인증 또는 권한 검사 과정에서 파싱·검증 예외가 발생할 수 있는 보호 API에 사용한다.
+
+```http
+GET /api/account/summary HTTP/1.1
+Authorization: Bearer invalid.test.token
+```
+
+```http
+GET /api/admin/summary HTTP/1.1
+Authorization: Bearer <LOW_PRIVILEGE_TEST_TOKEN>
+```
+
+잘못된 인증 정보는 거절되어야 한다. 오류 본문이 반환되면서 보호 데이터도 함께 포함되거나, 권한 검사 예외 뒤 기본 관리자·익명 권한으로 실행되면 fail-open이다. `401`과 `403`의 차이는 정상적인 인증·인가 구분일 수 있으므로 그 자체를 문제로 보지 않는다.
+
+### 5. 외부 인증 실패 시 접근 거부 확인
+
+**이럴 때 사용**: 테스트 환경에서 SSO·토큰 검증 서비스의 실패 응답을 mock 또는 프록시로 바꿀 수 있을 때 사용한다.
+
+| 모의 응답 | 확인할 것 |
+| :--- | :--- |
+| timeout | 로컬 세션이나 기본 권한이 발급되지 않음 |
+| `401`·서명 오류 | 외부 검증 실패로 접근이 종료됨 |
+| 잘못된 JSON | 파싱 예외 뒤 인증 성공값을 사용하지 않음 |
+
+외부 서비스를 직접 느리게 하거나 중단하지 않는다. 결제·주문 상태, 재시도, callback 정합성은 [비즈니스 로직](./business-logic.md)에서 확인한다.
+
+### 6. 오류 응답의 노출 정보 확인
+
+**이럴 때 사용**: 앞선 최소 변조에서 앱 또는 프레임워크 오류가 반환됐을 때 사용한다.
+
+| 노출 값 | 실무 판단 |
+| :--- | :--- |
+| 오류 식별자·요청 ID | 운영자 추적용이면 일반적으로 정상 |
+| 프레임워크 이름 | 단독 영향은 낮고 정확한 버전·취약 상태를 추가 확인 |
+| 소스 경로·함수·줄 번호 | 내부 구조 파악에 직접 도움이 되는지 확인 |
+| 테이블·컬럼·원본 쿼리 | SQLi 등 다음 진단에 사용할 수 있는지 확인 |
+| 내부 호스트·포트·URL | 내부 접근 경로와 결합 가능한지 확인 |
+| 비밀번호·토큰·연결 문자열 | 원문을 재노출하지 말고 마스킹해 사용 가능성만 확인 |
+
+안전한 외부 응답은 원인을 상세히 설명하지 않아도 된다.
+
+```json
+{
+  "error":"request_failed",
+  "request_id":"req-7f3a"
+}
+```
+
+### 7. 계정·자원 존재 여부는 차이만 확인
+
+**이럴 때 사용**: 로그인, 비밀번호 재설정, 초대, 자원 조회에서 같은 실패가 서로 다르게 보일 때 사용한다.
+
+```text
+존재하는 테스트 계정 + 잘못된 값
+존재하지 않는 계정 + 같은 잘못된 값
+```
+
+본문, 상태 코드, 길이와 시간을 비교한다. 여기서는 오류 응답이 일관적인지만 보고, 계정 목록 확인이나 후속 이메일 검증은 [인증](./authentication.md)의 사용자 열거 절차로 이어간다.
+
+### 8. 오류 뒤 자원 정리 여부 확인
+
+**이럴 때 사용**: 업로드, 임시 예약, 편집 잠금, 일회용 토큰 처리 중 한 번의 오류가 발생한 경우 사용한다.
+
+- 오류 후 같은 테스트 파일을 정상 업로드할 수 있는지 확인한다.
+- 테스트 초안의 편집 잠금이 해제됐는지 확인한다.
+- 실패한 일회용 토큰이 잘못 소모되거나 다시 유효해지지 않았는지 확인한다.
+- 임시 객체가 사용자에게 보이거나 다음 요청에 재사용되지 않는지 확인한다.
+
+반복 오류로 자원을 고갈시키지 않고, 통제된 실패 한 번과 정상 요청 한 번으로 확인한다. 동시성 자체가 핵심이면 [Race Condition](./race-condition.md) 절차로 분리한다.
+
+### 9. Burp에서 응답 차이 정리
+
+**이럴 때 사용**: 상태 코드는 같지만 본문이나 헤더가 미묘하게 다를 때 사용한다.
+
+- Repeater에서 정상, 예상 실패, 예외 유도 요청을 각각 저장한다.
+- Comparer로 본문과 헤더 차이를 비교한다.
+- Logger 또는 HTTP history에서 redirect, refresh 요청, 후속 API 호출을 확인한다.
+- 자동 스캔 결과는 동일한 최소 요청으로 다시 재현한다.
+
+## 우회 매트릭스
+
+| 관찰 결과 | 다음 확인 | 판단 |
+| :--- | :--- | :--- |
+| 잘못된 JSON이 CDN HTML로 거절됨 | 정상 JSON의 자료형 오류로 앱 계층 확인 | 앱 오류 처리까지 도달하지 않음 |
+| 모든 오류가 같은 JSON임 | 헤더, 쿠키, 후속 상태를 비교 | 일관된 본문은 긍정적 단서 |
+| 응답은 `200`이고 본문에 `error`가 있음 | 실제 상태·데이터·부수 효과 확인 | 상태 코드만으로 성공 판정 금지 |
+| 한 번만 `500`이 발생함 | 같은 최소 요청을 재전송 | 일회성 오류는 근거 부족 |
+| 스택 트레이스는 없고 요청 ID만 있음 | ID에 내부 정보가 포함되는지 확인 | 무작위 추적 ID는 정상 |
+| `404`가 권한 없음과 자원 없음에 동일함 | 본문·시간·부수 효과 비교 | 자원 존재를 숨기는 설계일 수 있음 |
+| 응답 시간만 다름 | 동일 조건을 여러 번 교차 측정 | 반복되는 차이만 후보 |
+| 개발 환경에서만 상세 오류가 보임 | 외부 접근성과 실제 데이터 연결 확인 | 공개된 개발 환경이면 별도 영향 판단 |
+| 프록시 오류와 앱 오류 모양이 다름 | `Via`, 요청 ID, 서버 로그 연결 확인 | 생성 계층을 나눠 기록 |
+
+## 취약 판정
+
+### 확정
+
+- 인증·권한·서명 검증 중 예외가 발생했는데 보호 데이터나 기능이 허용된다.
+- 외부 인증 서비스의 실패가 성공으로 처리되어 로컬 세션이나 접근 권한이 발급된다.
+- 오류 응답에 사용 가능한 자격증명, 토큰, 연결 문자열 또는 민감 데이터가 노출된다.
+- 한 번의 통제된 실패 뒤 잠금·임시 객체·일회용 상태가 남아 다른 정상 흐름에 영향을 준다.
+
+### 후보 또는 보류
+
+- 처리하지 못한 입력에서 `500`만 발생한다.
+- 무작위 요청 ID나 일반적인 오류 코드만 반환된다.
+- 프레임워크 이름이나 내부 경로가 보이지만 추가 활용 가능성이 확인되지 않는다.
+- `401`, `403`, `404`가 상황에 맞게 서로 다르게 반환된다.
+- 시간 차이가 작거나 반복되지 않는다.
+- mock 없는 운영 환경이라 외부 인증 실패를 안전하게 확인할 수 없다.
+
+### 영향 상승
+
+- 예외로 다른 사용자·관리자 권한 또는 조직 경계를 넘는다.
+- 노출된 비밀이 실제 내부 서비스 인증이나 다른 취약점 재현에 사용된다.
+- 오류 상태가 여러 요청이나 사용자에게 지속된다.
+- 제한된 단일 요청만으로도 서비스 가용성 저하가 반복 재현된다.
 
 ## 참고자료
 
-- [OWASP Top 10 2025 - A10: Mishandling of Exceptional Conditions](https://owasp.org/Top10/2025/)
-- [OWASP Cheat Sheet - Error Handling](https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html)
+- [OWASP Top 10:2025 A10 - Mishandling of Exceptional Conditions](https://owasp.org/Top10/2025/A10_2025-Mishandling_of_Exceptional_Conditions/)
+- [OWASP Error Handling Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html)
+- [OWASP WSTG - Testing for Error Handling](https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/08-Testing_for_Error_Handling/)
 - [OWASP - Improper Error Handling](https://owasp.org/www-community/Improper_Error_Handling)
-- [CWE-755: Improper Handling of Exceptional Conditions](https://cwe.mitre.org/data/definitions/755.html)
-- [CWE-209: Information Exposure Through Error Messages](https://cwe.mitre.org/data/definitions/209.html)
-- [PortSwigger - Information disclosure (error messages)](https://portswigger.net/web-security/information-disclosure)
-- [OWASP - Fail securely](https://owasp.org/www-community/Fail_securely)
+- [PortSwigger - Information disclosure](https://portswigger.net/web-security/information-disclosure)
+- [CWE-209 - Generation of Error Message Containing Sensitive Information](https://cwe.mitre.org/data/definitions/209.html)
+- [CWE-703 - Improper Check or Handling of Exceptional Conditions](https://cwe.mitre.org/data/definitions/703.html)

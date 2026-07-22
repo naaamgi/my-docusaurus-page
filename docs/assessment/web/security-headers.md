@@ -1,275 +1,294 @@
 ---
-sidebar_position: 24
+sidebar_position: 13
 title: 보안 헤더 점검
 description: 웹 진단 - CSP, HSTS, X-Frame-Options, X-Content-Type-Options 등 보안 헤더 점검 기준과 미흡 시 영향
 keywords: [Security Headers, CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, COOP, COEP, Clickjacking, OWASP A02]
 draft: false
 ---
 
-# 보안 헤더
-> 응답 헤더의 보안 강화 정책 미흡으로 인한 결함. 단독으로는 Medium 등급이 많지만, **다른 취약점 (XSS, MITM, Clickjacking) 의 영향을 증폭/완화** 하는 방어막 역할.
-> 보고서엔 거의 항상 포함되는 항목 — 표준 항목으로 점검 매트릭스 일괄 적용.
-
-## 점검 개요
-
-| 항목 | 내용 |
-| :--- | :--- |
-| **분류** | OWASP A02:2025 - Security Misconfiguration / KISA 보안 설정 |
-| **CWE** | [CWE-1021: Clickjacking](https://cwe.mitre.org/data/definitions/1021.html), [CWE-693: Protection Mechanism Failure](https://cwe.mitre.org/data/definitions/693.html), [CWE-319: Cleartext Transmission](https://cwe.mitre.org/data/definitions/319.html), [CWE-200: Information Exposure](https://cwe.mitre.org/data/definitions/200.html) |
-| **영향도** | 🟡 (대부분 단독 Medium) / 🔴 (CSP 없음 + XSS 존재 / HSTS 없음 + MITM 환경) |
-| **점검 난이도** | 하 (응답 헤더 1회 확인) |
-| **예상 점검 시간** | 30분 ~ 1시간 |
-
----
-
 ## 점검 목적
 
-응답 헤더의 보안 강화 정책이 적절히 설정되어 있는지 확인한다. 보안 헤더는 단일 결함보다 **다른 취약점의 영향을 증폭/완화** 하는 방어막 역할이 핵심 — CSP 가 있으면 XSS 가 발생해도 영향이 축소되고, HSTS 가 있으면 MITM 환경에서 평문 자격증명 탈취가 어려워진다.
+응답 헤더가 페이지의 용도에 맞게 적용되고 브라우저에서 실제로 동작하는지 확인한다. 보안 헤더는 대개 보조 방어다. 누락만으로 큰 취약점이라고 단정하지 않고, 클릭재킹 가능 화면·민감 응답 캐시·실제 XSS처럼 연결되는 조건을 함께 본다.
 
-> **다른 페이지와 영역 분리**
-> - CORS 헤더 (`Access-Control-Allow-*`) → `cors.md`
-> - 쿠키 속성 (`HttpOnly`, `Secure`, `SameSite`) → `session-management.md`
-> - CSP 우회 후 실제 XSS 입증 → `xss.md`
-> - HTTP Response Splitting / CRLF Injection → 별개 (모던 환경에선 거의 발견 안 됨)
+- CORS는 [CORS 잘못된 설정](./cors.md)에서 확인한다.
+- 쿠키의 `HttpOnly`, `Secure`, `SameSite`는 [세션 관리](./session-management.md)에서 확인한다.
+- CSP를 우회해 스크립트가 실행되는지는 [XSS](./xss.md)에서 확인한다.
 
----
+## 유형 구분
 
-## 유형 구분 — 점검 헤더 매트릭스
-
-| 헤더 | 점검 목적 | 권장 값 | 미설정 / 미흡 영향 |
-| :--- | :--- | :--- | :--- |
-| `Content-Security-Policy` | XSS 영향 축소 | `default-src 'self'; script-src 'self' 'nonce-...'` | 🟡 단독 / 🔴 (XSS 존재 시 증폭) |
-| `Strict-Transport-Security` | HTTPS 강제, SSL Strip 방어 | `max-age=31536000; includeSubDomains; preload` | 🔴 (MITM 환경에서 자격증명 탈취) |
-| `X-Frame-Options` / `CSP frame-ancestors` | Clickjacking 방어 | `DENY` / `SAMEORIGIN` / `frame-ancestors 'none'` | 🟡 (관리자/금융 페이지면 🔴) |
-| `X-Content-Type-Options` | MIME sniffing 방어 | `nosniff` | 🟡 (업로드 결함과 결합 시 🔴) |
-| `Referrer-Policy` | Referer 헤더로 정보 유출 방지 | `strict-origin-when-cross-origin` | 🟢 (URL 에 토큰이 있으면 🟡) |
-| `Permissions-Policy` | 브라우저 기능 제어 (카메라/위치 등) | 필요한 기능만 명시 허용 | 🟢 |
-| `Cross-Origin-Opener-Policy` (COOP) | 윈도우 격리 | `same-origin` | 🟡 |
-| `Cross-Origin-Embedder-Policy` (COEP) | 리소스 격리 | `require-corp` | 🟡 |
-| `Cross-Origin-Resource-Policy` (CORP) | 리소스 보호 | `same-origin` | 🟡 |
-| `Cache-Control` (민감 응답) | 민감 데이터 캐싱 방지 | `no-store, no-cache, must-revalidate` | 🟡 (개인정보/토큰 응답이 캐시되면 🔴) |
-| `Server` / `X-Powered-By` 등 | 정보 노출 | 헤더 제거 / 값 비활성 | 🟢 (정찰 정보 제공) |
-| `X-XSS-Protection` (deprecated) | 옛 브라우저 XSS 필터 | `0` 또는 미설정 — 활성화는 오히려 위험 | - |
-
----
+| 유형 | 특징 | 실무 판단 |
+| :--- | :--- | :--- |
+| 스크립트·리소스 제한 | CSP가 스크립트와 리소스 출처를 제한함 | 정책 존재보다 실제 적용 범위와 약한 지시어를 확인 |
+| HTTPS 고정 | HSTS가 이후 접속을 HTTPS로 고정함 | HTTPS 응답의 HSTS와 HTTP 진입 동작을 분리해 확인 |
+| 화면 삽입 제한 | `frame-ancestors` 또는 `X-Frame-Options`가 iframe 삽입을 제한함 | 클릭 가능한 중요 화면에서 외부 iframe 로드를 재현 |
+| 콘텐츠 해석 제한 | `nosniff`가 선언된 `Content-Type`을 따르게 함 | 업로드·사용자 콘텐츠 응답에서 MIME 오해석 조건 확인 |
+| 정보 전달 제한 | Referrer와 Cache 정책이 URL·응답 정보의 잔존 범위를 줄임 | 실제 외부 요청과 캐시 재사용 여부로 판단 |
+| 브라우저 기능·격리 | Permissions Policy와 COOP·COEP·CORP가 기능과 문서 경계를 제한함 | 서비스가 해당 기능을 사용하는 경우에만 우선 점검 |
+| 제품 정보 노출 | `Server`, `X-Powered-By` 등이 제품 단서를 제공함 | 버전 문자열만으로 취약 판정하지 않음 |
 
 ## 진단 절차
 
-### Step 1. 응답 헤더 수집
+#### Step 1. 비교할 응답 선택
 
-```bash
-# 메인 페이지 / 로그인 페이지 / 관리자 페이지 / API 엔드포인트 각각 확인
-curl -I https://<TARGET>/
-curl -I https://<TARGET>/login
-curl -I https://<TARGET>/admin
-curl -I https://<TARGET>/api/me
+메인 화면만 보지 않는다. 보호 목적이 다른 응답을 최소 한 개씩 고른다.
 
-# 외부 노출 환경이면 일괄 점검 도구 활용
-# - https://securityheaders.com/
-# - https://observatory.mozilla.org/
+```text
+로그인 전 HTML
+로그인 후 개인정보 화면
+상태 변경이 가능한 화면
+JSON API
+업로드 파일·정적 자산
+오류·리다이렉트 응답
 ```
 
-Burp Repeater 로도 동일하게 수집 가능. **페이지별로 헤더가 다른 경우가 흔함** — 메인은 헤더 적용, API 는 누락 등의 패턴.
+#### Step 2. 실제 GET 응답 저장
 
-### Step 2. 헤더별 존재 / 값 검증
+`curl -I`는 `HEAD` 요청이라 실제 `GET`과 헤더가 다를 수 있다. `GET` 응답 헤더를 기준선으로 저장하고, 필요할 때 `HEAD`와 비교한다.
 
-위 매트릭스 기준으로 한 줄씩 체크. 헤더가 있어도 **값이 약하면 미흡** (예: CSP 가 있지만 `unsafe-inline` 포함).
+```bash
+curl -sS -D - -o /dev/null https://<TARGET>/
+curl -sS -D - -o /dev/null https://<TARGET>/login
+curl -sS -D - -o /dev/null https://<TARGET>/api/me
+curl -sS -D - -o /dev/null http://<TARGET>/
+```
 
-### Step 3. CSP 분석
-CSP 정책 분석은 [Google CSP Evaluator](https://csp-evaluator.withgoogle.com/) 에 그대로 붙여넣으면 약점이 자동 분석됨. 주요 약점:
+Windows에서는 `curl.exe`와 출력 대상 `NUL`을 사용할 수 있다. 인증 후 화면은 Burp Repeater에서 세션 쿠키를 포함해 비교한다.
 
-- `unsafe-inline` (script-src) → 인라인 스크립트 허용 → XSS 거의 무방비
-- `unsafe-eval` → `eval()` 허용 → DOM XSS 영향 증폭
-- `data:` (script-src) → `<script src="data:...">` 우회
-- `*` 와일드카드 → 모든 외부 도메인 허용 = 사실상 정책 없음
-- JSONP 가능한 도메인 화이트리스트 → `script-src 'self' https://cdn.example.com` 인데 CDN 에 JSONP 엔드포인트 존재 시 우회
+#### Step 3. 헤더가 필요한 응답인지 판단
 
-### Step 4. Clickjacking PoC + HSTS 검증
+- CSP와 framing 방어는 브라우저가 렌더링하는 HTML에서 우선 본다. 단순 JSON API의 CSP 누락은 보통 의미가 작다.
+- 캐시 정책은 개인정보·토큰·결제 정보처럼 사용자별 응답에서 본다.
+- `nosniff`는 JavaScript, CSS, 업로드 파일처럼 잘못된 MIME 해석이 영향을 주는 응답에서 본다.
+- COOP·COEP·CORP는 교차 출처 격리나 `SharedArrayBuffer`가 필요한 서비스인지 먼저 확인한다.
 
-- `X-Frame-Options` / `frame-ancestors` 둘 다 없으면 `<iframe>` 임베드 PoC 작성
-- HSTS 미설정 시 `curl -I http://<TARGET>` 으로 HTTP 응답이 돌아오는지, HTTPS 응답 헤더에 `Strict-Transport-Security` 가 있는지 확인 → MITM 시나리오 입증
+#### Step 4. 값·적용 위치·중복 확인
+
+- 빈 값, 오타, 비표준 값이 브라우저에서 무시되는지 확인한다.
+- 같은 헤더가 여러 번 나오면 서로 충돌하는지 확인한다.
+- HSTS는 HTTPS 응답에서 받은 값만 유효하다.
+- `frame-ancestors`는 `<meta http-equiv>`로 적용할 수 없다.
+- `Content-Security-Policy-Report-Only`만 있으면 위반을 기록할 뿐 차단하지 않는다.
+
+#### Step 5. 브라우저에서 최소 재현
+
+- framing은 외부 Origin의 iframe과 Console 오류를 확인한다.
+- CSP는 DevTools Console에서 차단된 지시어와 실제 실행 여부를 확인한다.
+- Referrer Policy는 통제 가능한 외부 주소에 도착한 `Referer` 값을 확인한다.
+- 캐시는 재요청의 `Age`, `Cache-Status`, `X-Cache`와 사용자 간 응답 재사용 여부를 확인한다.
+
+#### Step 6. 연결되는 취약점과 분리 판정
+
+보안 헤더 누락과 실제 취약점을 분리한다. 예를 들어 CSP가 없어도 XSS가 자동으로 생기지 않고, framing 방어가 없어도 클릭할 기능이 없는 JSON 응답은 클릭재킹 대상이 아니다.
+
+### 상황별 빠른 선택
+
+| 현재 상황 | 먼저 확인할 것 |
+| :--- | :--- |
+| 브라우저가 렌더링하는 HTML | CSP 적용 여부와 `script-src`, framing 정책 |
+| 관리자·결제·설정 변경 화면 | 외부 iframe 로드와 실제 클릭 가능 여부 |
+| HTTPS 로그인 서비스 | HTTP 진입 동작과 HTTPS 응답의 HSTS |
+| 업로드 파일을 같은 Origin에서 제공 | `Content-Type`, `nosniff`, `Content-Disposition` |
+| 개인정보·토큰 API | `Cache-Control`과 공유 캐시 재사용 여부 |
+| URL에 토큰·식별자가 존재 | 외부 이동 시 실제 `Referer` 값 |
+| 카메라·마이크·위치 기능 사용 | Permissions Policy의 허용 Origin |
 
 ---
 
-## 페이로드 / 테스트 케이스
+## 페이로드 노트
 
-### 케이스 1: `Content-Security-Policy` 미설정 / 약한 정책
+### 1. CSP 적용 범위와 기본 정책
 
-**언제 점검하는지**: 모든 페이지. 특히 사용자 입력이 출력되는 페이지 (XSS 가능성 있는 곳) 는 필수.
+**이럴 때 사용**: HTML 페이지에 CSP가 있거나 XSS 영향 완화 여부를 확인한다.
 
-**판정 매트릭스:**
-
-```
-1. CSP 헤더 자체 없음                                          → 취약 (Medium)
-2. CSP 있지만 'unsafe-inline' 포함 (script-src)                → 취약 (효과 없음)
-3. CSP 있지만 'unsafe-eval' 포함                               → 미흡 (DOM XSS 증폭)
-4. CSP 있지만 * 와일드카드 (script-src *)                      → 취약 (효과 없음)
-5. CSP 에 data: 허용 (script-src 'self' data:)                 → 우회 가능
-6. CSP report-only 만 (Content-Security-Policy-Report-Only)    → 실제 차단 안 함, 보고서엔 미흡으로 보고
-7. CSP 에 nonce/hash 없는 'unsafe-inline' 대체 패턴 없음        → 인라인 스크립트 못 차단
+```http
+Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-<RANDOM>'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'
 ```
 
-**판정**: CSP Evaluator 점수 + 위 패턴 매칭. 점검 보고서엔 현재 CSP 값 그대로 + 약점 항목 나열.
+먼저 `script-src`가 없을 때 `default-src`가 대신 적용되는지 본다. `frame-ancestors`는 `default-src`의 영향을 받지 않으므로 별도로 확인한다.
 
-### 케이스 2: `Strict-Transport-Security` 미설정 / 짧은 max-age
+| 관찰 | 다음 확인 |
+| :--- | :--- |
+| CSP가 없음 | 실제 XSS 원시점이나 별도 기준에서 보조 방어 미흡으로 분리 |
+| Report-Only만 존재 | Console 위반은 기록되지만 스크립트가 실제 차단되는지 확인 |
+| `script-src`에 `*`, 넓은 host, `data:` | 해당 출처에서 실행 가능한 스크립트를 통제할 수 있는지 확인 |
+| `'unsafe-inline'` | nonce·hash 기반 정책과 실제 인라인 스크립트 허용 여부 확인 |
+| `'unsafe-eval'` | 애플리케이션이 `eval` 계열 실행에 의존하는지 확인 |
+| nonce가 매 응답에서 반복됨 | 다른 사용자·다른 요청에서도 재사용되는지 확인 |
 
-**언제 점검하는지**: HTTPS 를 사용하는 모든 서비스. 특히 로그인 / 결제 / 관리자 페이지 우선.
+정책 문자열만으로 XSS를 확정하지 않는다. [Google CSP Evaluator](https://csp-evaluator.withgoogle.com/)는 검토 보조 도구로 사용하고, 브라우저 동작과 실제 입력 지점을 별도로 확인한다.
 
-**판정 매트릭스:**
+### 2. 화면 삽입과 클릭재킹
 
-```
-1. HSTS 헤더 없음                                              → 🔴 취약 (SSL Strip 가능)
-2. max-age=0                                                  → HSTS 비활성 (취약)
-3. max-age < 15768000 (6개월)                                  → 미흡
-4. includeSubDomains 누락                                      → 미흡 (서브도메인 MITM 가능)
-5. preload 누락 + HSTS Preload List 미등록                     → 첫 방문은 보호 못 함
-6. http://<TARGET> 로 접속 시 200 OK (HTTPS 리다이렉트 없음)    → 🔴 (HSTS 와 별개 결함)
-```
-
-**확인 명령:**
-
-```bash
-curl -I http://<TARGET>/                  # HTTPS 리다이렉트 여부
-curl -I https://<TARGET>/ | grep -i strict-transport-security
-```
-
-**판정**: HSTS 가 없거나 `max-age` 가 짧으면 공용 Wi-Fi 등 MITM 환경에서 SSL Strip 으로 평문 자격증명 탈취 가능 → Critical 시나리오 (PoC 2 에서 입증).
-
-### 케이스 3: Clickjacking — `X-Frame-Options` / `frame-ancestors` 미설정
-
-**언제 점검하는지**: 변경 액션이 있는 모든 페이지. 특히 관리자 페이지, 결제, 권한 변경 페이지 우선.
-
-**판정 매트릭스:**
-
-```
-1. X-Frame-Options 헤더 없음 + CSP frame-ancestors 도 없음     → 🟡 ~ 🔴 (임팩트 큰 페이지면 🔴)
-2. X-Frame-Options: ALLOWALL (또는 비표준 값)                   → 취약
-3. X-Frame-Options: ALLOW-FROM <URL>                          → deprecated, 모던 브라우저 무시
-4. CSP frame-ancestors 'self' 또는 'none' 있으면                → X-Frame-Options 가 없어도 보호됨
-```
-
-**PoC HTML — 외부 도메인에서 iframe 임베드 시도:**
+**이럴 때 사용**: 버튼·링크·입력창이 있는 중요 화면을 외부 사이트가 iframe으로 불러올 수 있는지 확인한다.
 
 ```html
-<!DOCTYPE html>
-<html>
-<head><title>Clickjacking PoC</title></head>
-<body>
-  <h1>외부 사이트에 임베드 가능 여부 확인</h1>
-  <iframe src="https://<TARGET>/admin/delete-user?id=123"
-          width="1200" height="800"
-          style="opacity:0.5"></iframe>
-</body>
-</html>
+<!doctype html>
+<meta charset="utf-8">
+<title>Framing test</title>
+<iframe src="https://<TARGET>/settings/profile"
+        width="1000" height="700"
+        style="opacity:0.6"></iframe>
 ```
 
-**판정**: 외부 도메인에서 iframe 이 정상 로드되면 Clickjacking 가능. 임팩트가 큰 액션 (계정 삭제, 권한 부여, 이체) 이 1-클릭으로 트리거 가능하면 보고서 등급 상향.
+**확인할 것**: iframe이 보이는지만 확인하지 않는다. 테스트 계정으로 중요한 동작을 실제로 클릭할 수 있는지, 재인증·CSRF 방어·브라우저 차단이 있는지 함께 본다.
 
-### 케이스 4: `X-Content-Type-Options: nosniff` 미설정
-
-**언제 점검하는지**: 파일 업로드 기능이 있는 사이트, 사용자 콘텐츠를 서빙하는 도메인 (이미지 / 첨부파일 등).
-
-**판정:**
-
-```
-1. X-Content-Type-Options: nosniff 헤더 없음                    → 미흡
-
-2. 결합 시나리오 — 파일 업로드 결함 + nosniff 없음:
-   - 업로드된 .txt 파일에 <script>...</script> 가 있고
-   - 브라우저가 MIME sniffing 으로 HTML 로 해석
-   → Stored XSS 발생 (file-upload.md 의 케이스와 결합)
+```http
+Content-Security-Policy: frame-ancestors 'none'
+X-Frame-Options: DENY
 ```
 
-단독으로는 Low/Medium 이지만 업로드 결함과 결합 시 임팩트 증폭. `file-upload.md` 참조.
+`frame-ancestors`가 있으면 이를 우선 확인한다. `X-Frame-Options: ALLOW-FROM`은 오래된 비표준 방식이므로 현대 브라우저에서 보호된다고 가정하지 않는다.
 
-### 케이스 5: 민감 응답 캐시
-**언제 점검하는지**: 개인정보 / 토큰 / 세션 / 결제 정보가 포함된 응답.
+### 3. HSTS와 HTTP 진입 경로
 
-**판정 매트릭스:**
+**이럴 때 사용**: HTTPS 서비스를 HTTP 주소로 처음 방문할 수 있는지 확인한다.
 
-```
-1. Cache-Control 헤더 없음 (기본값 = 캐시 가능)                  → 취약
-2. Cache-Control: public 또는 max-age=N (양수)                  → 취약
-3. Cache-Control: private 만 있음 (브라우저는 캐시함)            → 미흡 (공유 PC 환경 위험)
-4. Cache-Control: no-store (또는 no-store, no-cache)            → 안전
-5. Pragma: no-cache 만 있고 Cache-Control 누락 (HTTP/1.0 만 대응) → 미흡
+```bash
+curl -sS -D - -o /dev/null http://<TARGET>/
+curl -sS -D - -o /dev/null https://<TARGET>/
 ```
 
-**예시 — 민감 응답:**
+```http
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+```
+
+- `max-age=0`은 저장된 HSTS 정책을 지우는 값이다.
+- HSTS는 HTTPS 응답에서만 학습된다. HTTP 응답에 같은 헤더가 있어도 유효하지 않다.
+- HTTP의 HTTPS 리다이렉트와 HSTS는 서로 다른 보호다. 둘 다 따로 확인한다.
+- `includeSubDomains`와 preload는 모든 하위 도메인의 HTTPS 준비 상태와 운영 정책을 확인한 뒤 판단한다. 누락만으로 곧바로 취약을 확정하지 않는다.
+
+### 4. `nosniff`와 업로드 파일 응답
+
+**이럴 때 사용**: 사용자가 올린 파일이나 JavaScript·CSS를 브라우저가 직접 불러온다.
+
+```http
+Content-Type: text/plain
+X-Content-Type-Options: nosniff
+Content-Disposition: attachment
+```
+
+헤더 누락만 기록하지 말고 실제 `Content-Type`, 다운로드 여부, same-origin 제공 여부와 브라우저 렌더링을 확인한다. HTML·SVG가 same-origin에서 active content로 실행되면 [파일 업로드](./file-upload.md)와 [XSS](./xss.md) 관점으로 영향이 올라간다.
+
+### 5. 민감 응답 캐시
+
+**이럴 때 사용**: 개인정보·토큰·결제 정보가 사용자별로 반환된다.
+
+| 값 | 의미 | 실무 확인 |
+| :--- | :--- | :--- |
+| `no-store` | 응답 저장 금지 | 민감 응답의 기본 후보 |
+| `no-cache` | 저장할 수 있지만 재사용 전 재검증 | 저장 금지와 같은 뜻으로 보지 않음 |
+| `private` | 공유 캐시 저장 금지 | 브라우저 캐시는 허용될 수 있음 |
+| `public`, 양수 `s-maxage` | 공유 캐시 허용 | 사용자별 응답이면 cache key와 재사용 확인 |
+
+헤더가 없다는 사실만으로 다른 사용자가 응답을 받는다고 단정하지 않는다. 인증 쿠키가 cache key에 반영되는지, CDN·프록시가 실제 저장했는지, 다른 테스트 계정 요청에 같은 본문이 반환되는지를 확인한다.
 
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/json
-Cache-Control: public, max-age=300         ← 취약: 5분 동안 공유 캐시 가능
+Cache-Control: public, s-maxage=300
+Age: 42
+X-Cache: HIT
 
-{
-  "user_id": 42,
-  "email": "victim@example.com",
-  "access_token": "eyJ..."
-}
+{"id":42,"displayName":"test-user-a"}
 ```
 
-**판정**: 위 응답이 회사 프록시 / CDN / 공유 PC 브라우저 캐시에 5분 저장됨 → 다른 사용자가 해당 캐시 키로 동일 응답 받을 가능성. `private` 만 있어도 공유 PC 브라우저 캐시는 노출.
+다른 테스트 계정에서도 같은 사용자별 응답이 재사용될 때 취약으로 확정한다.
 
-### 케이스 6: 정보 노출 헤더
+### 6. Referrer Policy
 
-**언제 점검하는지**: 모든 응답. 정찰 단계 정보 제공으로 임팩트는 낮지만 보고 항목으로 표준.
+**이럴 때 사용**: URL에 식별자나 일회성 값이 있고 외부 링크·이미지·분석 도구로 이동한다.
 
-**탐지 대상 헤더:**
-
-```
-Server: nginx/1.18.0                ← 웹 서버 종류 + 버전
-X-Powered-By: Express                ← 백엔드 프레임워크
-X-Powered-By: PHP/7.4.3              ← 언어 + 버전
-X-AspNet-Version: 4.0.30319          ← .NET 버전
-X-AspNetMvc-Version: 5.2             ← ASP.NET MVC 버전
-X-Generator: WordPress 5.8           ← CMS 버전
-Liferay-Portal: ...                  ← 포털 정보
-X-Drupal-Cache: ...
+```http
+Referrer-Policy: strict-origin-when-cross-origin
 ```
 
-**판정**: 버전이 노출되면 알려진 CVE 와 매칭 가능 → 공격 난이도 감소. 단독은 Low 지만 보고서엔 거의 항상 포함.
+통제 가능한 외부 페이지로 이동시킨 뒤 수신 요청의 `Referer`를 확인한다. 현대 브라우저의 기본 정책도 교차 출처에는 보통 Origin만 보내므로, 헤더 누락만으로 전체 URL 유출을 확정하지 않는다. URL에 비밀값을 넣는 설계는 별도 원인으로 기록한다.
 
-### 그 외 — 한 줄 언급만
-- **`Referrer-Policy` 미설정** — 외부 사이트로 이동 시 전체 URL 유출. URL 에 토큰이 있는 패턴 (`?token=...`) 이면 영향 큼
-- **`Permissions-Policy` 미설정** — 카메라/마이크/위치 권한 자동 허용 페이지로 동작. iframe 으로 임베드된 페이지에서 권한 남용 가능
-- **COOP / COEP / CORP 미설정** — Spectre 류 사이드 채널 표면 확장. SharedArrayBuffer 사용 페이지가 아니면 우선순위 낮음
-- **`X-XSS-Protection: 1; mode=block`** → deprecated. 활성화 시 오히려 우회 결함 (XS-Leak) 발생 가능 → `0` 또는 미설정 권장
-- **CSP 우회 (JSONP, AngularJS, `unsafe-eval` 결합)** → CSP 가 있어도 우회 가능한 케이스. 실제 XSS 입증은 `xss.md` 영역
-- **HTTP Response Splitting / CRLF Injection** → 모던 웹 서버는 거의 차단. 발견되면 Critical 이지만 빈도 낮음
+### 7. Permissions Policy와 교차 출처 격리
+
+이 헤더들은 서비스 요구사항을 먼저 확인한다.
+
+```http
+Permissions-Policy: geolocation=(), camera=(), microphone=()
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+Cross-Origin-Resource-Policy: same-site
+```
+
+- Permissions Policy가 없다고 카메라·마이크 권한이 자동 승인되는 것은 아니다. 브라우저 사용자 권한과 iframe의 기능 사용 범위를 추가로 제한하는 정책이다.
+- COEP는 허용 표시가 없는 교차 출처 리소스를 막을 수 있어 기능 장애 가능성을 함께 확인한다.
+- COOP·COEP·CORP 누락은 적용 목적과 실제 격리 요구가 없으면 일반 취약점으로 단정하지 않는다.
+
+### 8. 제품 정보와 오래된 헤더
+
+```http
+Server: nginx/1.24.0
+X-Powered-By: Express
+X-AspNet-Version: 4.0.30319
+X-Generator: WordPress 6.x
+X-XSS-Protection: 1; mode=block
+```
+
+버전 문자열은 정찰 단서다. 실제 서비스 버전과 일치하는지, 그 버전에 적용 가능한 취약점이 별도로 재현되는지 확인한다. `X-XSS-Protection`은 현대 CSP를 대신하지 않으며, 일반적으로 미설정 또는 `0`을 사용한다.
+
+---
+
+## 우회 매트릭스
+
+| 관찰된 증상 | 다음 확인 | 판단 주의 |
+| :--- | :--- | :--- |
+| 메인 HTML에만 헤더가 있음 | 로그인 후 화면·오류·직접 URL 응답 비교 | CDN과 애플리케이션 적용 범위가 다를 수 있음 |
+| `HEAD`와 `GET` 헤더가 다름 | 실제 브라우저와 GET 응답 기준으로 재검증 | `curl -I` 결과만 사용하지 않음 |
+| CSP가 여러 줄로 존재 | 브라우저가 모든 정책을 함께 적용하는지 확인 | 단순 문자열 합치기로 판단하지 않음 |
+| CSP 위반이 Console에만 표시됨 | Report-Only인지 확인 | 보고 발생과 차단은 다름 |
+| iframe이 빈 화면임 | Console의 `frame-ancestors`·XFO 오류 확인 | 로그인 실패·JS 오류와 framing 차단을 구분 |
+| HSTS가 HTTP 응답에만 있음 | HTTPS 응답에서 다시 확인 | HTTP에서 받은 HSTS는 무효 |
+| 민감 응답에 `private`만 있음 | 공유 캐시 저장 여부와 브라우저 요구사항 확인 | `private`은 공유 캐시를 막음 |
+| scanner가 헤더 누락을 표시함 | 보호 대상·브라우저 동작·결합 취약점 확인 | 도구 결과만으로 취약 확정하지 않음 |
 
 ---
 
 ## 취약 판정 기준
 
-다음 중 **하나라도** 해당하면 취약 / 미흡:
+### 취약 확정
 
-- [ ] `Content-Security-Policy` 미설정 또는 `unsafe-inline` / `unsafe-eval` / `*` / `data:` 포함
-- [ ] `Strict-Transport-Security` 미설정 또는 `max-age` < 6개월 / `includeSubDomains` 누락
-- [ ] `X-Frame-Options` / `CSP frame-ancestors` 둘 다 없음 (Clickjacking 가능)
-- [ ] `X-Content-Type-Options: nosniff` 미설정
-- [ ] 민감 응답 (개인정보 / 토큰 / 세션) 에 `Cache-Control: no-store` 누락
-- [ ] `Server` / `X-Powered-By` / `X-AspNet-Version` 등 버전 정보 노출
-- [ ] HTTP 접속이 HTTPS 로 강제 리다이렉트되지 않음
+- 외부 iframe에서 중요 화면이 로드되고 테스트 계정의 상태 변경 동작을 클릭할 수 있다.
+- 공유 캐시가 사용자별 민감 응답을 저장하고 다른 테스트 계정에 같은 내용을 반환한다.
+- CSP가 차단해야 할 스크립트가 약한 정책이나 잘못된 적용 때문에 실행되며 실제 XSS 원시점과 연결된다.
+- 업로드 파일이 잘못된 MIME 처리와 same-origin 제공 조건 때문에 active content로 실행된다.
 
-**오탐 주의:**
+### 후보 / 보류
 
-- [ ] CSP 가 있어도 너무 관대 (`*`, `unsafe-inline`) 면 실질 효과 없음 — CSP Evaluator 점수 함께 보고
-- [ ] 동적 콘텐츠 페이지 (CMS / 관리자) 는 `Cache-Control: no-store` 정상, 정적 자산 (이미지 / CSS / JS) 은 캐시 가능 — 페이지별 분리
-- [ ] `X-Frame-Options` 가 없어도 `CSP frame-ancestors` 가 있으면 보호됨 (모던 브라우저)
-- [ ] HSTS 가 없어도 모든 응답이 HTTPS 로 강제되면 즉시 Critical 아님 (Medium) — 단, 첫 방문 시점은 여전히 위험
-- [ ] B2B 내부망 등 MITM 시나리오가 비현실적인 환경은 HSTS 영향 등급 하향 가능
+- 필요한 HTML 응답에서 CSP·framing 정책·HSTS·`nosniff`가 빠졌지만 실제 악용 조건은 확인되지 않았다.
+- CSP에 넓은 출처나 위험 지시어가 있지만 공격자가 통제 가능한 실행 경로는 확인되지 않았다.
+- HTTP 접속과 HSTS 정책이 미흡하지만 실제 서비스 범위와 최초 방문 조건을 확인하지 못했다.
+- Referrer·Permissions Policy·교차 출처 격리 헤더가 없지만 민감정보 전송이나 기능 악용은 재현되지 않았다.
+- 제품·프레임워크 버전 문자열만 노출됐다.
+
+### 영향 상승 조건
+
+- 클릭재킹 대상이 결제·권한 변경·MFA 해제처럼 중요한 기능이다.
+- CSP 미흡이 실제 XSS와 연결된다.
+- 캐시 오염이 여러 사용자나 CDN 구간에서 반복 재현된다.
+- 업로드 콘텐츠가 서비스 주 Origin에서 실행된다.
+- HTTP 진입 경로에서 인증정보나 세션이 평문으로 전송되는 조건이 확인된다.
 
 ---
 
 ## 참고자료
 
-- [OWASP Secure Headers Project](https://owasp.org/www-project-secure-headers/)
-- [OWASP Cheat Sheet - HTTP Security Response Headers](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html)
-- [MDN - HTTP Security Headers](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers)
-- [MDN - Content Security Policy (CSP)](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP)
-- [securityheaders.com (Scott Helme)](https://securityheaders.com/)
+### 공식 및 테스트 가이드
+
+- [OWASP WSTG - Test Other HTTP Security Header Misconfigurations](https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/02-Configuration_and_Deployment_Management_Testing/14-Test_Other_HTTP_Security_Header_Misconfigurations)
+- [OWASP WSTG - Testing for Content Security Policy](https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/02-Configuration_and_Deployment_Management_Testing/12-Test_for_Content_Security_Policy)
+- [OWASP HTTP Security Response Headers Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html)
+- [OWASP Content Security Policy Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html)
+- [MDN - Content Security Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP)
+- [MDN - `frame-ancestors`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/frame-ancestors)
+- [HSTS Preload](https://hstspreload.org/)
+
+### 점검 도구
+
 - [Mozilla Observatory](https://observatory.mozilla.org/)
 - [Google CSP Evaluator](https://csp-evaluator.withgoogle.com/)
-- [HSTS Preload List](https://hstspreload.org/)
-- [Mozilla Web Security Guidelines](https://infosec.mozilla.org/guidelines/web_security)
+- [Security Headers](https://securityheaders.com/)
