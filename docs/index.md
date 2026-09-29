@@ -23,4 +23,5 @@ generated_index: true # 카테고리 색인 페이지를 위한 설정 (필요�
 | **레드팀 (Redteam)** | **C2 운영**, 공격 인프라 구축, **TTPs (전술/기술/절차)** 분석 및 고급 공격 시나리오 구현. | 심화된 공격/방어 메커니즘 학습자 |
 | **CTF (WarGame)** | **Wargame 플랫폼** 및 대회 문제 풀이(Pwn, Reverse, Web, Crypto) 기록. 문제 해결 능력 및 **새로운 취약점 연구** 증명. | 취약점 분석 능력을 키우는 분 |
 | **Cheatsheet** | 자주 사용하는 **명령어, 페이로드, 스크립트** 모음. 실습 및 분석 효율성을 위한 **핵심 요약** 자료. | 효율적인 작업 환경을 찾는 분 |
+| **[Practice > OWASP crAPI](./practice/owasp-crapi/c1-bola-vehicle-location.md)** | 웹·모바일 보안 실습과 취약점 분석 기록. | 실습으로 보안 진단을 익히는 분 |
 

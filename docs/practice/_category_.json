@@ -1,0 +1,10 @@
+{
+  "label": "Practice",
+  "position": 5,
+  "collapsible": true,
+  "collapsed": true,
+  "link": {
+    "type": "generated-index",
+    "description": "웹·모바일 보안 실습 기록"
+  }
+}

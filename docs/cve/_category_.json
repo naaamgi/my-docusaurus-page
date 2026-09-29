@@ -1,10 +1,10 @@
 {
-  "label": "Web/Mobile",
-  "position": 2,
+  "label": "CVE 분석",
+  "position": 4,
   "collapsible": true,
   "collapsed": true,
   "link": {
     "type": "doc",
-    "id": "assessment/index"
+    "id": "cve/index"
   }
 }
