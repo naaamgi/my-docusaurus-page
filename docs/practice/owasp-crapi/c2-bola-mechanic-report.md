@@ -1,11 +1,11 @@
 ---
-title: C2. 다른 사용자의 정비 보고서 조회
+title: C2. 타 사용자의 정비 보고서 조회
 sidebar_position: 2
 description: OWASP crAPI의 정비 보고서 API에서 객체별 권한 검사를 확인한 기록
 keywords: [crAPI, BOLA, API 보안, 정비 보고서, report_id]
 ---
 
-# C2. 다른 사용자의 정비 보고서 조회
+# C2. 타 사용자의 정비 보고서 조회
 
 ## 배경 개념
 

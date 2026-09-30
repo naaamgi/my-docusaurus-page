@@ -1,11 +1,11 @@
 ---
-title: C6. Contact Mechanic 기능의 Layer 7 DoS
+title: C6. Layer 7 DoS
 sidebar_position: 6
 description: OWASP crAPI의 Contact Mechanic 요청에서 반복 제어값을 조작해 서비스 가용성 저하를 유발한 기록
 keywords: [crAPI, Layer 7 DoS, Unrestricted Resource Consumption, API 보안]
 ---
 
-# C6. Contact Mechanic 기능의 Layer 7 DoS
+# C6. Layer 7 DoS
 
 ## 배경 개념
 

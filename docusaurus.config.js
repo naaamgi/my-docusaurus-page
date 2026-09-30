@@ -36,7 +36,26 @@ const config = {
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {
-    v4: true, // Improve compatibility with the upcoming Docusaurus v4
+    // Keep existing v4 behavior; enable new defaults individually after review.
+    v4: {
+      removeLegacyPostBuildHeadAttribute: true,
+      useCssCascadeLayers: true,
+      siteStorageNamespacing: false,
+      fasterByDefault: false,
+      mdx1CompatDisabledByDefault: false,
+    },
+    faster: {
+      swcJsLoader: true,
+      swcJsMinimizer: true,
+      // Keep the existing HTML minifier: @swc/html fails Windows cache ACL checks.
+      swcHtmlMinimizer: false,
+      lightningCssMinimizer: true,
+      mdxCrossCompilerCache: true,
+      rspackBundler: true,
+      rspackPersistentCache: true,
+      ssgWorkerThreads: true,
+      gitEagerVcs: true,
+    },
   },
 
   // Set the production url of your site here

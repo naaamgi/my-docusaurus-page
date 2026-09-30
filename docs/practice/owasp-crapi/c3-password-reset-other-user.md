@@ -1,11 +1,11 @@
 ---
-title: C3. 다른 사용자의 비밀번호 재설정
+title: C3. 타 사용자의 비밀번호 재설정
 sidebar_position: 3
 description: OWASP crAPI에서 짧은 OTP와 구버전 비밀번호 재설정 API를 이용한 계정 탈취를 확인한 기록
 keywords: [crAPI, OTP, 비밀번호 재설정, 무차별 대입, 인증]
 ---
 
-# C3. 다른 사용자의 비밀번호 재설정
+# C3. 타 사용자의 비밀번호 재설정
 
 ## 배경 개념
 

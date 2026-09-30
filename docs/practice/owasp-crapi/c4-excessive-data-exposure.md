@@ -1,11 +1,11 @@
 ---
-title: C4. 다른 사용자의 민감 정보가 노출되는 API
+title: C4. 타 사용자의 민감 정보가 노출
 sidebar_position: 4
 description: OWASP crAPI의 커뮤니티 게시글 API가 다른 사용자의 이메일과 차량 ID를 반환하는 것을 확인한 기록
 keywords: [crAPI, Excessive Data Exposure, 민감 정보 노출, API 보안]
 ---
 
-# C4. 다른 사용자의 민감 정보가 노출되는 API
+# C4. 타 사용자의 민감 정보 노출
 
 ## 배경 개념
 

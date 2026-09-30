@@ -1,11 +1,11 @@
 ---
-title: C1. 다른 사용자의 차량 정보 조회
+title: C1. 타 사용자의 차량 정보 조회
 sidebar_position: 1
 description: OWASP crAPI에서 차량 위치 API의 객체 수준 권한 검사를 확인한 기록
 keywords: [crAPI, BOLA, API 보안, 객체 수준 권한]
 ---
 
-# C1. 다른 사용자의 차량 정보 조회
+# C1. 타 사용자의 차량 정보 조회
 
 ## 배경 개념
 
