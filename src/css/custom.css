@@ -417,6 +417,15 @@ body {
   margin-bottom: 0;
 }
 
+/* Give article images the same frame and depth as code blocks. */
+.markdown img {
+  border: 1px solid var(--namgi-border);
+  border-radius: 10px;
+  box-shadow: var(--namgi-shadow);
+  height: auto;
+  max-width: 100%;
+}
+
 /* Custom Details Style */
 .theme-doc-markdown details {
   background-color: var(--namgi-surface) !important;
