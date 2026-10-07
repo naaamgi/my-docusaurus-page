@@ -42,7 +42,7 @@ flowchart LR
 | OWASP 2025 카테고리 | 관련 진단 페이지 |
 | :--- | :--- |
 | **A01:2025 - Broken Access Control** | [authorization-idor](./authorization-idor), [csrf](./csrf), [open-redirect](./open-redirect), [lfi](./lfi) |
-| **A02:2025 - Security Misconfiguration** | [security-headers](./security-headers), [cors](./cors), [information-disclosure](./information-disclosure), [http-request-smuggling](./http-request-smuggling) |
+| **A02:2025 - Security Misconfiguration** | [security-headers](./security-headers), [cors](./cors), [information-disclosure](./information-disclosure), [http-request-smuggling](./http-request-smuggling), [http-host-header](./http-host-header) |
 | **A03:2025 - Software Supply Chain Failures** | (외부 도구 - retire.js, OWASP Dependency-Check, Snyk) |
 | **A04:2025 - Cryptographic Failures** | `crypto-failures` (예정) |
 | **A05:2025 - Injection** | [sql-injection](./sql-injection), [xss](./xss), [command-injection](./command-injection), [ssti](./ssti), [ssrf](./ssrf), [xxe](./xxe), [nosql-injection](./nosql-injection), [prototype-pollution](./prototype-pollution) |
@@ -85,6 +85,7 @@ flowchart LR
 | 설정 미흡 | 보안 헤더 누락 | [security-headers](./security-headers) |
 | 설정 미흡 | CORS 잘못된 설정 | [cors](./cors) |
 | 설정 미흡 | HTTP 요청 스머글링 (Desync) | [http-request-smuggling](./http-request-smuggling) |
+| 설정 미흡 | Host 헤더 변조 (재설정 포이즈닝·캐시) | [http-host-header](./http-host-header) |
 | 클라이언트 | CSRF | [csrf](./csrf) |
 | 외부 요청 | SSRF | [ssrf](./ssrf) |
 | 외부 요청 | XXE | [xxe](./xxe) |
