@@ -42,12 +42,12 @@ flowchart LR
 | OWASP 2025 카테고리 | 관련 진단 페이지 |
 | :--- | :--- |
 | **A01:2025 - Broken Access Control** | [authorization-idor](./authorization-idor), [csrf](./csrf), [open-redirect](./open-redirect), [lfi](./lfi) |
-| **A02:2025 - Security Misconfiguration** | [security-headers](./security-headers), [cors](./cors), [information-disclosure](./information-disclosure) |
+| **A02:2025 - Security Misconfiguration** | [security-headers](./security-headers), [cors](./cors), [information-disclosure](./information-disclosure), [http-request-smuggling](./http-request-smuggling) |
 | **A03:2025 - Software Supply Chain Failures** | (외부 도구 - retire.js, OWASP Dependency-Check, Snyk) |
 | **A04:2025 - Cryptographic Failures** | `crypto-failures` (예정) |
-| **A05:2025 - Injection** | [sql-injection](./sql-injection), [xss](./xss), [command-injection](./command-injection), [ssti](./ssti), [ssrf](./ssrf), [xxe](./xxe), [nosql-injection](./nosql-injection) |
+| **A05:2025 - Injection** | [sql-injection](./sql-injection), [xss](./xss), [command-injection](./command-injection), [ssti](./ssti), [ssrf](./ssrf), [xxe](./xxe), [nosql-injection](./nosql-injection), [prototype-pollution](./prototype-pollution) |
 | **A06:2025 - Insecure Design** | [business-logic](./business-logic), [race-condition](./race-condition) |
-| **A07:2025 - Authentication Failures** | [authentication](./authentication), [session-management](./session-management), [jwt-attacks](./jwt-attacks) |
+| **A07:2025 - Authentication Failures** | [authentication](./authentication), [session-management](./session-management), [jwt-attacks](./jwt-attacks), [oauth](./oauth) |
 | **A08:2025 - Software or Data Integrity Failures** | [insecure-deserialization](./insecure-deserialization), [file-upload](./file-upload) |
 | **A09:2025 - Security Logging and Alerting Failures** | `logging-monitoring` (예정) |
 | **A10:2025 - Mishandling of Exceptional Conditions** | [error-handling](./error-handling) |
@@ -71,8 +71,10 @@ flowchart LR
 | 입력값 검증 | 파일 업로드 | [file-upload](./file-upload) |
 | 입력값 검증 | 파일 다운로드 / Path Traversal | [lfi](./lfi) |
 | 입력값 검증 | 템플릿 인젝션 (SSTI) | [ssti](./ssti) |
+| 입력값 검증 | 프로토타입 오염 (Prototype Pollution) | [prototype-pollution](./prototype-pollution) |
 | 입력값 검증 | XXE / 역직렬화 | [xxe](./xxe), [insecure-deserialization](./insecure-deserialization) |
-| 인증/인가 | 인증 우회 | [authentication](./authentication), [jwt-attacks](./jwt-attacks) |
+| 인증/인가 | 인증 우회 | [authentication](./authentication), [jwt-attacks](./jwt-attacks), [oauth](./oauth) |
+| 인증/인가 | OAuth / 소셜 로그인 | [oauth](./oauth) |
 | 인증/인가 | 권한 상승 (수직/수평) | [authorization-idor](./authorization-idor) |
 | 세션 관리 | 세션 고정 / 예측 가능한 토큰 | [session-management](./session-management) |
 | 세션 관리 | 자동완성 / 쿠키 속성 | [session-management](./session-management) |
@@ -82,6 +84,7 @@ flowchart LR
 | 비즈니스 로직 | Race Condition | [race-condition](./race-condition) |
 | 설정 미흡 | 보안 헤더 누락 | [security-headers](./security-headers) |
 | 설정 미흡 | CORS 잘못된 설정 | [cors](./cors) |
+| 설정 미흡 | HTTP 요청 스머글링 (Desync) | [http-request-smuggling](./http-request-smuggling) |
 | 클라이언트 | CSRF | [csrf](./csrf) |
 | 외부 요청 | SSRF | [ssrf](./ssrf) |
 | 외부 요청 | XXE | [xxe](./xxe) |
