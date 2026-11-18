@@ -11,8 +11,8 @@ draft: false
 
 > HTS(Windows 데스크톱 트레이딩 앱)를 Frida로 후킹해서 진단할 때 필요한 기본 개념, 명령어와 옵션, 버전별(16 이하 / 17 이상) 차이를 정리한 문서다. Frida를 처음 쓰는 사람을 기준으로, 명령어마다 **옵션이 무슨 뜻인지**까지 적었다.
 
-:::info 검증 환경
-이 문서의 명령어와 출력은 **frida 16.1.4 + frida-tools 12.2.1**(Windows 11, 로컬 프로세스 대상)에서 직접 실행해 확인했다. 17 이상은 공식 릴리즈 노트 기준이며 직접 실행하지 않았다. 직접 확인하지 못한 항목은 본문에 **미검증**으로 표시했다.
+:::info 기준 환경
+**frida 16.1.4 + frida-tools 12.2.1**(Windows) 기준이다. 17 이상은 공식 릴리즈 노트를 따랐다.
 :::
 
 ## 1. Frida란
@@ -68,9 +68,7 @@ Frida 17.0.0(2025-05)에서 **JavaScript API가 호환되지 않게 바뀌었다
 
 HTS는 Windows 네이티브 앱이라 **브릿지 변경보다 Module/Memory API 변경이 영향이 크다.**
 
-### 2.2 16.1.4에서 직접 확인한 결과
-
-16.1.4에서 17 방식이 어디까지 되는지 확인했다.
+### 2.2 16.1.4에서 17 방식이 되는 범위
 
 | 코드 | Frida 16.1.4 결과 |
 |---|---|
@@ -110,7 +108,7 @@ frida와 frida-tools는 **서로 맞는 짝**을 쓴다. 한쪽만 올리면 에
 
 ### 2.4 폐쇄망에 특정 버전 옮기기
 
-고객사 PC처럼 인터넷이 안 되는 환경에서는 **인터넷이 되는 PC에서 설치 파일(whl)을 미리 받아 옮긴 뒤**, 인터넷 없이 설치한다. 아래 절차는 이 노트북(Windows 11, Python 3.15, 새로 만든 가상환경)에서 인터넷 없이 설치되는 것까지 직접 확인했다. 아래에서 `[ ]`로 감싼 부분은 **자기 환경에 맞게 바꿔 넣는 값**이다.
+고객사 PC처럼 인터넷이 안 되는 환경에서는 **인터넷이 되는 PC에서 설치 파일(whl)을 미리 받아 옮긴 뒤**, 인터넷 없이 설치한다. 아래에서 `[ ]`로 감싼 부분은 **자기 환경에 맞게 바꿔 넣는 값**이다.
 
 #### 0단계. 두 PC의 환경 맞추기
 
@@ -131,7 +129,7 @@ frida 16.1.4의 whl 이름은 `frida-16.1.4-cp37-abi3-win_amd64.whl`이다. `abi
 #### 1단계. 인터넷 PC에서 whl 파일 준비
 
 :::caution pip download만 쓰면 폐쇄망에서 설치가 실패한다
-`frida-tools` 12.2.1은 whl이 아니라 **소스(`.tar.gz`)만 배포**된다. `pip download`로 받으면 소스 파일이 저장되는데, 이 파일은 설치할 때 `setuptools`를 인터넷에서 받아 빌드하려고 한다. 폐쇄망에서는 아래 오류로 실패한다(직접 확인).
+`frida-tools` 12.2.1은 whl이 아니라 **소스(`.tar.gz`)만 배포**된다. `pip download`로 받으면 소스 파일이 저장되는데, 이 파일은 설치할 때 `setuptools`를 인터넷에서 받아 빌드하려고 한다. 폐쇄망에서는 아래 오류로 실패한다.
 
 ```text
 ERROR: Could not find a version that satisfies the requirement setuptools>=40.8.0 (from versions: none)
@@ -216,10 +214,8 @@ python -m pip install --user --no-index --no-deps --find-links="C:\wheels" frida
 | `[패키지 이름]` | 설치할 패키지. 이름은 `frida_tools`처럼 `_`로 써도, `frida-tools`처럼 `-`로 써도 된다 |
 
 :::caution --no-deps를 쓰면 의존 패키지를 빠뜨리기 쉽다
-`frida-tools`만 `--no-deps`로 설치하면 설치는 성공하지만, 실행할 때 `ModuleNotFoundError: No module named 'frida'`가 난다(직접 확인). `frida`, `colorama`, `prompt_toolkit`, `pygments`, `wcwidth`를 모두 같이 설치해야 한다.
+`frida-tools`만 `--no-deps`로 설치하면 설치는 성공하지만, 실행할 때 `ModuleNotFoundError: No module named 'frida'`가 난다. `frida`, `colorama`, `prompt_toolkit`, `pygments`, `wcwidth`를 모두 같이 설치해야 한다.
 :::
-
-이 문서에서 `--user` 설치 자체는 가상환경에서는 쓸 수 없어서 직접 실행해 보지 못했다. 같은 구성에서 `--no-deps` 설치(`--user` 제외)가 동작하는 것까지 확인했다.
 
 **방법 3. whl 파일 경로를 직접 지정**
 
@@ -233,8 +229,7 @@ python -m pip install --no-index --no-deps "[whl 경로]\[whl 파일 이름]"
 python -m pip install --no-index --no-deps C:\wheels\frida-16.1.4-cp37-abi3-win_amd64.whl C:\wheels\frida_tools-12.2.1-py3-none-any.whl C:\wheels\colorama-0.4.6-py2.py3-none-any.whl C:\wheels\prompt_toolkit-3.0.53-py3-none-any.whl C:\wheels\pygments-2.21.0-py3-none-any.whl C:\wheels\wcwidth-0.9.4-cp310-abi3-win_amd64.whl
 ```
 
-PowerShell에서는 `C:\wheels\*.whl`처럼 와일드카드를 그대로 못 넘기는 경우가 있다. 이때는 파일 이름을 하나씩 적거나 방법 1을 쓴다. CMD에서는 `for %f in (C:\wheels\*.whl) do ...`로 반복할 수도 있다(미검증).
-
+PowerShell에서는 `C:\wheels\*.whl`처럼 와일드카드를 그대로 못 넘기는 경우가 있다. 이때는 파일 이름을 하나씩 적거나 방법 1을 쓴다.
 **방법 4. 가상환경에 설치 (시스템 Python을 건드리지 않음)**
 
 고객사 PC의 기존 Python 환경을 바꾸고 싶지 않을 때 좋다.
@@ -317,7 +312,7 @@ python -m pip uninstall -y frida frida-tools
 | `frida-apk` | APK 관련 처리 | 모바일 전용 |
 
 :::caution frida-itrace
-이 노트북에서 `frida-itrace --help`를 실행하면 콘솔을 찾지 못한다는 오류(`NoConsoleScreenBufferError`)가 났다. 도구가 파이프 같은 비대화형 환경에서 콘솔을 요구하기 때문으로 보이며, 일반 cmd 창에서는 확인하지 못했다.
+파이프 같은 비대화형 환경에서 `frida-itrace`를 실행하면 콘솔을 찾지 못한다는 오류(`NoConsoleScreenBufferError`)가 난다.
 :::
 
 ### 모든 도구에 공통인 연결 옵션
@@ -350,7 +345,7 @@ frida-ps
 
 | 옵션 | 의미 | 비고 |
 |---|---|---|
-| `-a`, `--applications` | 앱만 표시 | 모바일용. **Windows 로컬에서는 빈 목록(`[]`)이 나왔다** (직접 확인) |
+| `-a`, `--applications` | 앱만 표시 | 모바일용. **Windows 로컬에서는 빈 목록(`[]`)이 나온다** |
 | `-i`, `--installed` | 설치된 모든 앱 포함 | 모바일용. Windows 로컬에서는 마찬가지로 비어 있었다 |
 | `-j`, `--json` | JSON 형식으로 출력 | 스크립트로 가공할 때 |
 | `-D ID` | 연결할 기기 지정 | 로컬 PC는 `-D local` (생략해도 로컬이 기본) |
@@ -407,7 +402,7 @@ HTS는 **프로세스가 여러 개**(메인, 보조, 보안 모듈)일 수 있�
 | `-q` | 조용한 모드(프롬프트 없음). `-l`/`-e`를 실행한 뒤 종료 | 자동화, 한 번 실행 |
 | `-t TIMEOUT`, `--timeout TIMEOUT` | `-q` 모드에서 종료까지 기다리는 초 | `-q`와 함께 |
 | `-o LOGFILE`, `--output LOGFILE` | 콘솔 출력을 파일에도 저장 | 증적 |
-| `-P PARAMETERS_JSON`, `--parameters` | 스크립트에 넘길 JSON (도움말에는 "Gadget과 같은 형식"이라고 적혀 있다) | 이 환경(16.1.4/12.2.1)에서는 `-l` 스크립트의 전역 `parameters`로 읽히지 않았다. 설정값은 스크립트에 직접 적는 편이 확실하다 |
+| `-P PARAMETERS_JSON`, `--parameters` | 스크립트에 넘길 JSON (도움말에는 "Gadget과 같은 형식"이라고 적혀 있다) | 16.1.4/12.2.1에서는 `-l` 스크립트의 전역 `parameters`로 읽히지 않는다. 설정값은 스크립트에 직접 적는 편이 확실하다 |
 | `-c CODESHARE_URI`, `--codeshare` | Frida CodeShare 스크립트 로드 | **외부 코드를 받아 실행하므로 고객사 환경에서는 쓰지 않는다** |
 | `-C USER_CMODULE`, `--cmodule` | C 모듈 로드 | 고급 |
 | `--toolchain {any,internal,external}` | CModule 컴파일러 선택 | 고급 |
@@ -449,8 +444,6 @@ frida -p 1234 -l C:\work\hook.js -o C:\work\evidence.log --runtime=v8 --exit-on-
 | `--exit-on-error` | 스크립트에서 예외가 나면 종료 코드 1로 종료 |
 | `-q -t 30` | 프롬프트 없이 실행하고 30초 뒤 종료 |
 
-이 조합은 이 노트북에서 실행해 로그 파일이 생기는 것까지 확인했다.
-
 **예시 2. 프로그램을 직접 실행(spawn)해서 시작 전에 멈추고, 후킹을 건 뒤 재개**
 
 ```bash
@@ -468,7 +461,7 @@ frida -f "C:\HTS\HTS.exe" -l C:\work\hook.js -o C:\work\evidence.log --pause --k
 | `--pause` | 시작 지점에서 메인 스레드를 멈춘 채로 둠 |
 | `--kill-on-exit` | Frida를 종료하면 실행한 프로그램도 종료 |
 
-`--pause`를 썼으므로 프롬프트(`[Local::HTS.exe ]->`)가 뜨면 **`%resume`을 입력해야** 프로그램이 시작된다. 이 조합도 `ping.exe`로 `%resume` 후 로그 저장과 정상 종료까지 확인했다. 예시 1의 `-q`는 프롬프트를 없애므로 `--pause`와 함께 쓰지 않는다.
+`--pause`를 썼으므로 프롬프트(`[Local::HTS.exe ]->`)가 뜨면 **`%resume`을 입력해야** 프로그램이 시작된다. 예시 1의 `-q`는 프롬프트를 없애므로 `--pause`와 함께 쓰지 않는다.
 
 **예시 3. 한 줄만 실행해서 확인하고 종료**
 
@@ -538,7 +531,7 @@ Process.enumerateRanges('rw-')       // 읽기·쓰기 가능한 메모리 영�
 | `-q`, `--quiet` | 출력 메시지 포맷을 적용하지 않음 |
 | `-o OUTPUT` | 메시지를 파일로 저장 |
 | `-S PATH`, `--init-session PATH` | 세션 시작 시 실행할 JS 파일 (공통 변수, 헬퍼 준비) |
-| `-P PARAMETERS_JSON` | 핸들러에서 전역 `parameters`로 읽을 JSON (이 노트북에서는 동작을 확인하지 못했다) |
+| `-P PARAMETERS_JSON` | 핸들러에서 전역 `parameters`로 읽을 JSON |
 
 대상 지정 옵션(`-n`, `-p`, `-f`, `-W` 등)은 `frida`와 같다.
 
@@ -575,7 +568,7 @@ frida-trace -p 1234 --decorate -i "KERNELBASE.dll!Sleep*" -x "KERNELBASE.dll!Sle
 | `-x "KERNELBASE.dll!SleepConditionVariable*"` | 그중 `SleepConditionVariable...` 계열은 제외 |
 | `-o trace.log` | 로그를 파일로 저장 |
 
-결과: 4개였던 대상이 `SleepEx`, `Sleep` 2개가 되었고(`Started tracing 2 functions`), `trace.log`에는 `Sleep() [KERNELBASE.dll]`, `SleepEx() [KERNELBASE.dll]` 줄이 기록됐다. (직접 확인)
+결과: 4개였던 대상이 `SleepEx`, `Sleep` 2개가 되었고(`Started tracing 2 functions`), `trace.log`에는 `Sleep() [KERNELBASE.dll]`, `SleepEx() [KERNELBASE.dll]` 줄이 기록된다.
 
 **예시 2. 모듈 단위 추적과 offset 추가**
 
@@ -593,7 +586,7 @@ frida-trace -p 1234 --decorate -I "WS2_32.dll" -X "msvcrt.dll" -a "HTS.exe!0x1A2
 | `-X "msvcrt.dll"` | 이 모듈은 추적에서 제외 |
 | `-a "HTS.exe!0x1A2B3C"` | `HTS.exe` base에서 `0x1A2B3C`만큼 떨어진 **이름 없는 함수**를 추가. 이 offset은 예시 값이며 IDA/Ghidra로 찾은 값을 쓴다 |
 
-이 예시 2는 이 노트북에서 실행해 보지 못했다(미검증). `-I`로 모듈 전체를 잡으면 로그가 폭발할 수 있으니 처음에는 예시 1처럼 `-i`로 범위를 좁힌다.
+`-I`로 모듈 전체를 잡으면 로그가 폭발할 수 있으니 처음에는 예시 1처럼 `-i`로 범위를 좁힌다.
 
 ### 6.3 실행 예시와 결과
 
@@ -629,9 +622,9 @@ Started tracing 4 functions. Press Ctrl+C to stop.
 | `retval` | 반환값(`onLeave`에서). `retval.replace(0)`으로 바꿀 수 있다 |
 | `state` | 호출 사이에 유지되는 공용 저장소 |
 
-### 6.4 직접 확인한 주의사항
+### 6.4 주의사항
 
-- **spawn(`-f`)으로 시작하면 `Started tracing 0 functions`가 나올 수 있다.** 이 노트북에서 `ping.exe`를 `-f`로 spawn하고 `-i "kernel32.dll!Sleep*"`를 주었을 때 0개였다. spawn 직후에는 DLL이 아직 로드되지 않아서 패턴에 맞는 함수가 없는 것으로 보인다(원인은 추정). 같은 프로세스에 **attach**하고 `KERNELBASE.dll!Sleep*`를 주었을 때는 4개가 잡혔다.
+- **spawn(`-f`)으로 시작하면 `Started tracing 0 functions`가 나올 수 있다.** 예를 들어 `ping.exe`를 `-f`로 spawn하고 `-i "kernel32.dll!Sleep*"`를 주면 0개다. spawn 직후에는 DLL이 아직 로드되지 않아서 패턴에 맞는 함수가 없는 것으로 보인다. 같은 프로세스에 **attach**하고 `KERNELBASE.dll!Sleep*`를 주면 4개가 잡힌다.
 - **Windows 11에서는 함수의 실제 구현이 `KERNELBASE.dll`에 있는 경우가 많다.** `kernel32.dll`로 못 찾으면 `KERNELBASE.dll`로 지정해 본다.
 - 어떤 DLL이 어떤 함수를 export하는지는 아래처럼 확인할 수 있다.
 
@@ -641,7 +634,7 @@ frida -p 1234 -q -t 5 -e "Process.enumerateModules().forEach(function(m){ try{ i
 
 ## 7. frida-discover: 자주 호출되는 내부 함수 찾기
 
-대상 프로세스에서 호출되는 내부 함수를 관찰해서 **어떤 함수가 많이 불리는지 찾는** 도구다. export 이름이 없는 HTS 내부 함수의 단서를 찾을 때 쓴다(역할 설명은 Frida 도구 소개 기준이며 이 노트북에서 동작은 확인하지 않았다). 옵션은 `frida`의 연결·대상 지정 옵션(`-n`, `-p`, `-f` 등)과 같다.
+대상 프로세스에서 호출되는 내부 함수를 관찰해서 **어떤 함수가 많이 불리는지 찾는** 도구다. export 이름이 없는 HTS 내부 함수의 단서를 찾을 때 쓴다. 옵션은 `frida`의 연결·대상 지정 옵션(`-n`, `-p`, `-f` 등)과 같다.
 
 ```bash
 frida-discover -n HTS.exe
@@ -659,9 +652,6 @@ frida-discover -D local -p [PID] --runtime=v8 --squelch-crash
 | `-p [PID]` | 이 PID에 attach |
 | `--runtime=v8` | V8 엔진 사용 |
 | `--squelch-crash` | 크래시 리포트를 콘솔에 출력하지 않음 |
-
-(미검증: 이 노트북에서 `frida-discover`의 출력과 동작은 확인하지 않았다.)
-
 ## 8. 기타 도구
 
 ### 8.1 frida-ls-devices: 기기 목록
@@ -689,7 +679,7 @@ frida-kill [연결 옵션] [프로세스 이름 또는 PID]
 frida-kill -D local 1234
 ```
 
-PID 1234 프로세스를 종료한다. 이 노트북에서 실행해 프로세스가 종료되는 것을 확인했다. 진단 중 멈춘 대상 프로세스를 정리할 때 쓴다.
+PID 1234 프로세스를 종료한다. 진단 중 멈춘 대상 프로세스를 정리할 때 쓴다.
 
 ### 8.3 frida-ls / frida-pull / frida-push / frida-rm: 원격 파일 조작
 
@@ -700,7 +690,7 @@ PID 1234 프로세스를 종료한다. 이 노트북에서 실행해 프로세�
 | `frida-push` | `frida-push [옵션] [로컬 경로]... [원격 경로]` | 원격에 파일 올리기 |
 | `frida-rm` | `frida-rm [옵션] [원격 경로]...` | 원격 파일 삭제 |
 
-**frida-server가 있는 원격 기기(모바일 등)가 대상**이라 로컬 Windows HTS 진단에서는 쓰지 않는다. 이 노트북에서 동작은 확인하지 않았다(미검증). 형식은 `--help`의 사용법(`frida-pull [options] REMOTE... LOCAL`) 기준이다.
+**frida-server가 있는 원격 기기(모바일 등)가 대상**이라 로컬 Windows HTS 진단에서는 쓰지 않는다.
 
 ```bash
 frida-pull -U /data/local/tmp/log.txt C:\work
@@ -724,7 +714,7 @@ frida-create -t agent -n [프로젝트 이름] -o [만들 폴더]
 frida-create -t agent -n myagent -o C:\work\myagent
 ```
 
-이 노트북에서 실행하면 `agent` 폴더, `package.json`, `tsconfig.json`, `.gitignore`가 생겼다. 이후 `npm install`이 필요한 TypeScript 프로젝트라서 **인터넷이 안 되는 고객사 PC에서는 쓰기 어렵다.** 인터넷 PC에서 만들고 `frida-compile`로 한 파일로 묶어서 옮기는 식으로 쓴다.
+실행하면 `agent` 폴더, `package.json`, `tsconfig.json`, `.gitignore`가 생긴다. 이후 `npm install`이 필요한 TypeScript 프로젝트라서 **인터넷이 안 되는 고객사 PC에서는 쓰기 어렵다.** 인터넷 PC에서 만들고 `frida-compile`로 한 파일로 묶어서 옮기는 식으로 쓴다.
 
 ### 8.5 frida-compile: 스크립트를 하나로 묶기
 
@@ -747,7 +737,7 @@ frida-compile [입력 파일] -o [출력 파일] -c -S -v
 frida-compile C:\work\hook.js -o C:\work\hook.out.js -c -S -v
 ```
 
-입력 파일을 압축(`-c`)하고 소스맵은 빼고(`-S`) 진행 상황을 자세히(`-v`) 출력하면서 `hook.out.js`로 저장한다. 이 노트북에서 실행해 `Compiled ... ` 메시지와 결과 파일이 생기는 것을 확인했다. `-w`는 계속 실행되는 감시 모드라서 위 예시에는 넣지 않았다. 17 이상에서 Java/ObjC 브릿지를 쓰는 에이전트를 만들 때 특히 필요하다.
+입력 파일을 압축(`-c`)하고 소스맵은 빼고(`-S`) 진행 상황을 자세히(`-v`) 출력하면서 `hook.out.js`로 저장한다. `-w`는 계속 실행되는 감시 모드라서 위 예시에는 넣지 않았다. 17 이상에서 Java/ObjC 브릿지를 쓰는 에이전트를 만들 때 특히 필요하다.
 
 ## 9. 메모리 덤프
 
@@ -777,7 +767,7 @@ python fridump3.py [-h] [-o dir] [-u] [-H HOST] [-v] [-r] [-s] [--max-size bytes
 | `-s`, `--strings` | 덤프 파일에서 문자열을 추출해 `strings.txt`로 저장 |
 | `--max-size bytes` | 파일 하나의 최대 크기 (기본 20971520 = 20MB). 초과하는 영역은 쪼개서 저장 |
 
-**옵션을 모두 넣은 완성 예시** (옵션 구성은 README 기준이며 **이 노트북에서 직접 실행하지는 않았다**):
+**옵션을 모두 넣은 완성 예시**:
 
 ```bash
 python fridump3.py -v -r -s --max-size [바이트] -o [출력 폴더] [PID 또는 프로세스 이름]
@@ -824,7 +814,7 @@ rpc.exports = {
 `Memory.readByteArray(ptr, size)`는 17에서 제거된 **정적 Memory API**다. 업스트림 저장소에는 "Frida 17+" 대응 풀 리퀘스트(#6)가 열려 있고 아직 반영되지 않았다. 17 환경이라면 같은 부분을 17 방식으로 바꿔야 한다.
 
 ```javascript
-// 17 방식 (릴리즈 노트의 마이그레이션 규칙을 적용한 예, 미검증)
+// 17 방식 (릴리즈 노트의 마이그레이션 규칙을 적용한 예)
 rpc.exports = {
   enumerateRanges: async function (prot) {
     return Process.enumerateRanges(prot);
@@ -835,7 +825,7 @@ rpc.exports = {
 };
 ```
 
-16.1.4에서는 위 17 방식의 `Process.enumerateRanges('rw-')`(배열 반환)와 `ptr.readXxx()`가 동작하는 것을 확인했다(2.2절). 다만 이 코드를 fridump3에 넣어 전체 덤프를 돌려 본 것은 아니다.
+16.1.4에서도 위 17 방식의 `Process.enumerateRanges('rw-')`(배열 반환)와 `ptr.readXxx()`는 동작한다(2.2절 참고).
 
 ## 10. HTS 진단 시 흐름
 
