@@ -534,6 +534,12 @@ div[class*='codeBlockContent'] pre,
   vertical-align: top;
 }
 
+/* Wrap long inline code (e.g. API calls without spaces) inside table cells
+   so wide tables fit the content column instead of scrolling sideways. */
+.markdown table code {
+  overflow-wrap: anywhere;
+}
+
 /* Keep the label column of assessment type tables on one line. */
 .markdown h2[id='유형-구분'] + table th:first-child,
 .markdown h2[id='유형-구분'] + table td:first-child {

@@ -1,0 +1,11 @@
+{
+  "label": "Financial (HTS/MTS/WTS)",
+  "position": 3,
+  "collapsible": true,
+  "collapsed": true,
+  "link": {
+    "type": "generated-index",
+    "slug": "/assessment/financial",
+    "description": "금융권(HTS/MTS/WTS) 진단 기록과 도구 사용법"
+  }
+}
