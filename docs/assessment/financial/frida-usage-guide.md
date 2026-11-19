@@ -1,16 +1,15 @@
 ---
 sidebar_position: 1
-title: Frida로 HTS 진단하기 - 기본 개념·명령어·16/17 차이
-description: Windows HTS 동적 진단을 위한 Frida 입문. frida-tools 명령어와 옵션 설명, frida-trace, 메모리 덤프(fridump3), Frida 16 이하와 17 이상의 API 차이 정리
-keywords: [Frida, frida-tools, frida-trace, fridump3, HTS, 금융권 진단, 메모리 덤프, Frida 17, Interceptor, REPL]
+title: Frida 사용법 - 기본 개념·명령어·16/17 차이
+description: Windows 앱 동적 분석을 위한 Frida 입문. 설치(폐쇄망 포함), frida-tools 명령어와 옵션 설명, frida-trace, 메모리 덤프(fridump3), Frida 16 이하와 17 이상의 API 차이 정리
+keywords: [Frida, frida-tools, frida-trace, fridump3, 폐쇄망 설치, 메모리 덤프, Frida 17, Interceptor, REPL]
 toc_max_heading_level: 3
 draft: false
 ---
 
-# Frida로 HTS 진단하기
+# Frida 사용법
 
-> HTS(Windows 데스크톱 트레이딩 앱)를 Frida로 후킹해서 진단할 때 필요한 기본 개념, 명령어와 옵션, 버전별(16 이하 / 17 이상) 차이를 정리한 문서다. Frida를 처음 쓰는 사람을 기준으로, 명령어마다 **옵션이 무슨 뜻인지**까지 적었다.
-
+> Frida의 기본 개념, 설치, 명령어와 옵션, 버전별(16 이하 / 17 이상) 차이를 정리한 문서다. Frida를 처음 쓰는 사람을 기준으로, 명령어마다 **옵션이 무슨 뜻인지**까지 적었다.
 :::info 기준 환경
 **frida 16.1.4 + frida-tools 12.2.1**(Windows) 기준이다. 17 이상은 공식 릴리즈 노트를 따랐다.
 :::
@@ -18,15 +17,6 @@ draft: false
 ## 1. Frida란
 
 Frida는 실행 중인 프로세스에 **JavaScript를 주입(inject)** 해서 함수 호출을 가로채고(후킹), 인자와 반환값을 보거나 바꾸고, 메모리를 읽는 **동적 계측(dynamic instrumentation)** 도구다. 대상 프로그램을 수정하거나 재컴파일하지 않아도 된다.
-
-HTS 진단에서 주로 하는 일은 다음과 같다.
-
-| 목적 | 예시 |
-|---|---|
-| 통신 데이터 확인 | `send`, `recv`, `WSASend`, `WSARecv` 후킹으로 암호화 전후 데이터 확인 |
-| 암호화 확인 | `CryptEncrypt`, `BCryptEncrypt` 등 후킹으로 평문, 키, IV 확인 |
-| 메모리 평문 노출 점검 | 프로세스 메모리를 덤프해서 계정, 토큰, 주문 정보 검색 |
-| 클라이언트 검증 로직 확인 | 무결성 검사, 위변조 탐지 함수의 반환값 관찰 |
 
 ### 구성 요소
 
@@ -535,6 +525,82 @@ Process.enumerateRanges('rw-')       // 읽기·쓰기 가능한 메모리 영�
 
 대상 지정 옵션(`-n`, `-p`, `-f`, `-W` 등)은 `frida`와 같다.
 
+### 6.1.1 모듈 이름은 어떻게 알아내나
+
+**모듈**은 프로세스에 로드된 EXE 또는 DLL 파일 하나다. HTS는 실행 파일(`HTS.exe`)과 수십 개의 DLL(윈도우 DLL + 증권사/보안 업체 DLL)로 이루어져 있고, `-i "모듈!함수"`의 모듈 자리에는 이 파일 이름이 들어간다. 이름은 **대상 프로세스에 붙어서 목록을 뽑아 보면** 알 수 있다.
+
+**방법 1. 로드된 모듈 이름 목록**
+
+```bash
+frida -p [PID] -q -t 5 -e "console.log(Process.enumerateModules().map(function(m){return m.name}).join('\n'))"
+```
+
+```text
+PING.EXE
+ntdll.dll
+KERNEL32.DLL
+KERNELBASE.dll
+msvcrt.dll
+WS2_32.dll
+```
+
+**방법 2. 이름, 주소, 크기, 파일 경로까지 보기**
+
+```bash
+frida -p [PID] -q -t 5 -e "Process.enumerateModules().forEach(function(m){ console.log(m.name, m.base, m.size, m.path) })"
+```
+
+```text
+PING.EXE 0x7ff663d40000 49152 C:\WINDOWS\system32\PING.EXE
+ntdll.dll 0x7ff987620000 2523136 C:\WINDOWS\SYSTEM32\ntdll.dll
+```
+
+**방법 3. HTS 자체 DLL만 골라내기**
+
+윈도우 폴더 밖에 있는 모듈이 증권사 또는 보안 업체가 만든 DLL일 가능성이 높다.
+
+```bash
+frida -p [PID] -q -t 5 -e "Process.enumerateModules().forEach(function(m){ if (m.path.toLowerCase().indexOf('windows') < 0) console.log(m.name, m.path) })"
+```
+
+**방법 4. 이 이름 패턴의 함수를 가진 모듈 찾기 (대소문자 무시)**
+
+`*Crypt*` 같은 이름의 함수가 어느 모듈에 몇 개 있는지 센다. `frida-trace`에 모듈을 지정하기 전에 범위를 좁힐 때 쓴다.
+
+```bash
+frida -p [PID] -q -t 5 -e "var re=/crypt/i; Process.enumerateModules().forEach(function(m){ var n=m.enumerateExports().filter(function(e){return re.test(e.name)}).length; if(n>0) console.log(m.name, n) })"
+```
+
+```text
+bcrypt.dll 60
+CRYPT32.dll 152
+ADVAPI32.dll 68
+```
+
+이름만 알면 되는 경우에는 윈도우 기본 명령도 쓸 수 있다.
+
+```bash
+tasklist /m /fi "PID eq [PID]"
+```
+
+| 부분 | 의미 |
+|---|---|
+| `tasklist /m` | 프로세스가 로드한 DLL 목록을 보여줌 |
+| `/fi "PID eq [PID]"` | 이 PID만 필터링 |
+
+**무엇을 보고 고르나**
+
+목적에 따라 후보 모듈이 정해져 있다. 위 방법으로 목록을 뽑은 뒤 해당 이름이 있는지 확인한다.
+
+| 알고 싶은 것 | 후보 모듈 | 대표 함수 |
+|---|---|---|
+| 네트워크 송수신 | `WS2_32.dll` | `send`, `recv`, `sendto`, `WSASend`, `WSARecv` |
+| 암호화 (CNG) | `bcrypt.dll` | `BCryptEncrypt`, `BCryptDecrypt` |
+| 암호화 (CryptoAPI), 인증서 | `CRYPT32.dll`, `ADVAPI32.dll` | `CryptEncrypt`, `CryptDecrypt` |
+| 증권사/보안 업체 자체 로직 | 윈도우 폴더 밖 DLL, `HTS.exe` 자체 | export가 없으면 offset(`-a`)으로 후킹 |
+
+처음에는 이름으로 의심 가는 모듈 하나를 골라 `-i "[모듈]!*"`로 함수를 훑고, 흥미로운 함수가 보이면 범위를 좁히는 순서가 안전하다.
+
 ### 6.2 패턴 문법
 
 `-i`와 `-x`는 `모듈!함수` 형태를 받는다. 각각 와일드카드를 쓸 수 있다. 아래는 공식 문서(frida.re/docs/frida-trace)의 설명이다.
@@ -545,6 +611,24 @@ Process.enumerateRanges('rw-')       // 읽기·쓰기 가능한 메모리 영�
 | `-i "ws2_32.dll!send*"` | `ws2_32.dll`의 `send`로 시작하는 함수 |
 | `-i "msvcrt.dll!*mem*"` | `msvcrt.dll`에서 이름에 `mem`이 들어간 함수 |
 | `-i "ws2_32.dll!"` (끝이 `!`) | 해당 모듈의 모든 함수 |
+| `-i "*enc*"` | **모든 모듈**에서 이름에 소문자 `enc`가 들어간 함수 (대소문자 구분) |
+| `-i "*enc*/i"` | 뒤에 `/i`를 붙이면 **대소문자를 구분하지 않는다** (`CryptEncrypt`, `ENCODE` 등도 포함) |
+
+**대소문자 구분 여부가 결과를 크게 바꾼다.** `*enc*`는 기본적으로 대소문자를 구분하므로 `CryptEncrypt`, `BCryptEncrypt`처럼 대문자 `E`로 시작하는 Windows API를 놓친다. 같은 프로세스(`ping.exe`)에서 실행한 결과는 다음과 같다.
+
+| 패턴 | 추적 대상 개수 | 비고 |
+|---|---|---|
+| `*enc*` | 104개 | `Presence`, `Reference` 같은 무관한 함수가 섞이고, 정작 `CryptEncrypt`는 빠짐 |
+| `*ENC*` | 0개 | 대소문자가 달라서 하나도 안 잡힘 |
+| `*enc*/i` | 258개 | `CryptEncrypt`, `AddUsersToEncryptedFile` 등 포함 |
+
+```bash
+frida-trace -p [PID] --decorate -i "*enc*/i"
+```
+
+- **범위가 너무 넓다.** 모듈 지정 없이 `*enc*`를 쓰면 로드된 **모든 DLL**에서 찾아서 수백 개가 후킹된다. 호출이 많은 함수가 섞이면 로그가 폭발하고 대상 프로그램이 느려지거나 멈출 수 있다. 처음에는 `-i "CRYPT32.dll!*Crypt*/i"`나 `-i "bcrypt.dll!*Encrypt*/i"`처럼 **모듈을 지정**하고, 필요하면 `-x`로 노이즈를 뺀다.
+- 결과로 `__handlers__` 아래 함수 수만큼 `.js` 파일이 생긴다. 폴더를 보면 어떤 모듈에서 무엇이 잡혔는지 한눈에 알 수 있다.
+- Java 메서드(`-j`)에서도 같은 방식으로 `/i`(대소문자 무시), `s`(시그니처 포함), `u`(앱 클래스만) 플래그를 붙이는 예가 공식 문서에 있다 (`-j '*!*certificate*/isu'`). 모바일 진단에서 쓴다.
 
 옵션은 **입력한 순서대로** 처리된다. 같은 옵션이라도 순서가 다르면 결과 개수가 달라진다(공식 문서 예시: `-i "str*" -i "mem*" -X "msvcrt.dll"`과 `-X "msvcrt.dll" -i "str*" -i "mem*"`는 결과가 다르다). **제외는 포함 뒤에 적는다**는 식으로 의도에 맞게 순서를 정한다.
 
@@ -827,19 +911,7 @@ rpc.exports = {
 
 16.1.4에서도 위 17 방식의 `Process.enumerateRanges('rw-')`(배열 반환)와 `ptr.readXxx()`는 동작한다(2.2절 참고).
 
-## 10. HTS 진단 시 흐름
-
-1. `frida-ps`로 대상 프로세스와 PID를 확인한다.
-2. `frida -n 이름` 또는 `frida -p PID`로 attach가 되는지 확인한다.
-3. attach가 막히면(프로세스 종료, 에러) `frida -f 경로`로 spawn을 시도한다.
-4. `frida-trace`로 통신(`send`/`recv`), 암호화 API를 훑는다.
-5. 필요한 지점만 `-l`로 직접 작성한 스크립트를 로드해 인자, 반환값을 본다.
-6. 메모리 덤프(fridump3)로 평문 노출을 확인한다.
-7. 로그와 화면을 증적으로 저장한다 (`-o`).
-
-금융권 앱은 일반적으로 키보드 보안, 백신/무결성 모듈, anti-debug가 함께 동작해서 **Frida attach 자체가 막히는 경우**가 있다. 이때 대응 방법은 이 문서에서 다루지 않았고, 실제 진단 기록으로 별도 정리할 예정이다.
-
-## 빠른 명령어 참조
+## 10. 빠른 명령어 참조
 
 ```bash
 # 프로세스 확인
@@ -865,7 +937,7 @@ frida-trace -p 1234 --decorate -i "WS2_32.dll!send*" -i "WS2_32.dll!recv*" -o tr
 python fridump3.py -s -o C:\dump 1234
 ```
 
-## 트러블슈팅 체크리스트
+## 11. 트러블슈팅 체크리스트
 
 ### 스크립트가 `not a function` 에러를 낸다
 - [ ] `frida --version`과 `pip show frida-tools`로 버전 확인
